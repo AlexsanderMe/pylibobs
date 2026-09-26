@@ -1105,6 +1105,10 @@ _SOURCE_EXTRAS = """
 
     /* Icon (for picker UIs) */
     int obs_source_get_icon_type(const char *id);
+    /* OBS 32.2+: custom icon paths for dark / light themes. NULL unless the
+       type's icon_type is OBS_ICON_TYPE_CUSTOM and it provides the callback. */
+    const char *obs_source_get_dark_icon(const char *id);
+    const char *obs_source_get_light_icon(const char *id);
 
     /* Media controls — for ffmpeg_source, vlc_source */
     void     obs_source_media_play_pause(obs_source_t *source, bool pause);

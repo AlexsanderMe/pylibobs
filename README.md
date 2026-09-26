@@ -59,7 +59,7 @@ Maintainers / contributors can refresh the bundled libs by running:
 ```bash
 python scripts/fetch_libs.py                  # current platform
 python scripts/fetch_libs.py --all            # every platform
-python scripts/fetch_libs.py --version 32.1.2 # pin OBS version
+python scripts/fetch_libs.py --version 32.2.2 # pin OBS version
 ```
 
 This downloads libobs from the official OBS GitHub release. The `_libs/` tree is `.gitignore`d
@@ -184,14 +184,19 @@ pylibobs/
 
 ## Coverage / known gaps
 
-`pylibobs` currently declares **100% of the public libobs API** (all 1388 exported
-`obs_*` / `gs_*` / `signal_*` / `audio_resampler_*` / `media_remux_*` functions are callable
-via `pylibobs._ffi.get_lib()`). Pythonic class-based wrappers cover the common workflows:
+`pylibobs` targets **libobs 32.2.2** and declares every function it exports (1384
+`obs_*` / `gs_*` / `signal_*` / `proc_*` / `calldata_*` / `audio_output_*` / `video_output_*`
+symbols), reachable via `pylibobs._ffi.get_lib()`. 1157 of them carry their full C
+signature; the remaining 227 are declared as `void f(void)` placeholders because
+`scripts/generate_cdef.py` cannot parse their headers yet — they resolve, but need a
+curated signature in `_declarations.py` before they can be called correctly.
+Pythonic class-based wrappers cover the common workflows:
 
 - Lifecycle, video/audio init, scenes, sources, scene items, transforms (pos/scale/rot/crop/bounds)
-- Outputs (file + RTMP streaming), encoders (incl. ROI hints), services
+- Outputs (file + RTMP streaming), encoders (incl. ROI hints and `EncoderCaps`), services
 - Live preview (`Display` attached to a native window via HWND)
 - Filters, transitions, hotkeys, fader + VU meter, audio monitoring
+- Type lookups: display names, defaults, encoder capabilities, themed source icons (32.2+)
 - Raw audio/video callbacks (numpy-friendly), audio resampler, media remux
 - Properties API (read + edit, with type-aware widgets in `examples/pylibobs_studio.py`)
 - Save / load whole scene collections to JSON

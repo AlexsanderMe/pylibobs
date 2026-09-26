@@ -9,8 +9,25 @@ Usage::
 
 from __future__ import annotations
 
+from enum import IntFlag
+
 from ._ffi import ffi, get_lib, is_alive, register_wrapper
 from .data import OBSData
+
+
+class EncoderCaps(IntFlag):
+    """What an encoder type supports (``OBS_ENCODER_CAP_*`` in obs-encoder.h)."""
+
+    NONE = 0
+    DEPRECATED = 1 << 0
+    PASS_TEXTURE = 1 << 1
+    DYN_BITRATE = 1 << 2
+    INTERNAL = 1 << 3
+    ROI = 1 << 4
+    SCALING = 1 << 5
+    #: OBS 32.2+: the bitrate can change while encoding a multitrack stream
+    #: (set by the AMF encoders).
+    MULTITRACK_DYN_BITRATE = 1 << 6
 
 
 class _BaseEncoder:
@@ -50,6 +67,11 @@ class _BaseEncoder:
     @property
     def active(self) -> bool:
         return bool(get_lib().obs_encoder_active(self._ptr))
+
+    @property
+    def caps(self) -> EncoderCaps:
+        """Capabilities of this encoder's type (dynamic bitrate, ROI, …)."""
+        return EncoderCaps(get_lib().obs_encoder_get_caps(self._ptr))
 
     # ------------------------------------------------------------------
     # Settings

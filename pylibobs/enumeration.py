@@ -8,6 +8,8 @@ Includes:
                                enum_encoder_types, enum_output_types,
                                enum_service_types)
   * Display-name lookup       (get_display_name_for)
+  * Themed source icons       (get_source_dark_icon, get_source_light_icon)
+  * Encoder capabilities      (get_encoder_caps)
   * Default-settings lookup   (get_defaults_for)
   * Audio monitoring devices  (enum_audio_monitoring_devices)
 """
@@ -19,6 +21,7 @@ from typing import Iterable
 
 from ._ffi import ffi, get_lib
 from .data import OBSData
+from .encoder import EncoderCaps
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +178,36 @@ def get_encoder_display_name(encoder_id: str) -> str:
 def get_service_display_name(service_id: str) -> str:
     raw = get_lib().obs_service_get_display_name(service_id.encode())
     return ffi.string(raw).decode() if raw != ffi.NULL else ""
+
+
+def _optional_str(raw) -> str | None:
+    return ffi.string(raw).decode() if raw != ffi.NULL else None
+
+
+def get_source_dark_icon(source_id: str) -> str | None:
+    """Custom icon a source type provides for dark themes (OBS 32.2+).
+
+    ``None`` unless the type declares a custom icon and implements the
+    callback — true of no stock OBS plugin, so this is for third-party
+    sources feeding a picker UI.
+    """
+    return _optional_str(get_lib().obs_source_get_dark_icon(source_id.encode()))
+
+
+def get_source_light_icon(source_id: str) -> str | None:
+    """Custom icon a source type provides for light themes (OBS 32.2+).
+
+    See :func:`get_source_dark_icon`.
+    """
+    return _optional_str(get_lib().obs_source_get_light_icon(source_id.encode()))
+
+
+def get_encoder_caps(encoder_id: str) -> EncoderCaps:
+    """Capabilities of an encoder type, without creating an encoder.
+
+    Unknown ids report :attr:`EncoderCaps.NONE`.
+    """
+    return EncoderCaps(get_lib().obs_get_encoder_caps(encoder_id.encode()))
 
 
 def get_source_defaults(source_id: str) -> OBSData | None:

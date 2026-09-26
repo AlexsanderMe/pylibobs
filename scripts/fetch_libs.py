@@ -8,7 +8,7 @@ and may also be run by maintainers locally:
     python scripts/fetch_libs.py                       # current platform
     python scripts/fetch_libs.py --all                 # every platform
     python scripts/fetch_libs.py --platform linux --arch x86_64
-    python scripts/fetch_libs.py --version 32.2.1      # pin OBS version
+    python scripts/fetch_libs.py --version 32.2.2      # pin OBS version
 
 The bundled files are written under:
     pylibobs/_libs/<platform>/<arch>/
@@ -45,7 +45,7 @@ GITHUB_API = f"https://api.github.com/repos/{REPO}/releases"
 #: disagrees with `obs_get_version`, so any custom module (solin-framesrc, a
 #: branded virtual-camera filter) must be built against THIS tag's headers and
 #: import lib. Tracking "latest" instead silently moves that target mid-build.
-DEFAULT_OBS_TAG = "32.1.2"
+DEFAULT_OBS_TAG = "32.2.2"
 LIBS_DIR   = Path(__file__).parent.parent / "pylibobs" / "_libs"
 
 # --------------------------------------------------------------------------

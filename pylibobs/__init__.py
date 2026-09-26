@@ -39,7 +39,7 @@ from .context import (  # noqa: F401
 from .data import OBSData
 from .source import Source
 from .scene import Scene, SceneItem
-from .encoder import VideoEncoder, AudioEncoder
+from .encoder import VideoEncoder, AudioEncoder, EncoderCaps
 from .service import Service
 from .output import Output
 from .display import Display, render_main_texture_letterboxed
@@ -84,6 +84,7 @@ from .enumeration import (
     enum_encoder_types, enum_output_types, enum_service_types,
     get_source_display_name, get_output_display_name,
     get_encoder_display_name, get_service_display_name,
+    get_source_dark_icon, get_source_light_icon, get_encoder_caps,
     get_source_defaults, get_encoder_defaults,
     get_service_defaults, get_output_defaults,
     enum_audio_monitoring_devices, audio_monitoring_available,
@@ -145,6 +146,10 @@ __all__ = [
     "enum_output_types",
     "enum_service_types",
     "get_source_display_name",
+    "get_source_dark_icon",
+    "get_source_light_icon",
+    "get_encoder_caps",
+    "EncoderCaps",
     "get_output_display_name",
     "get_encoder_display_name",
     "get_service_display_name",

@@ -147,6 +147,25 @@ def collect_referenced_types(decls):
     return structs, enums, typedefs
 
 
+PUBLIC_PREFIXES = ("obs_", "gs_", "signal_", "proc_", "calldata_",
+                   "audio_output_", "video_output_")
+
+
+def curated_names() -> set[str]:
+    """Functions _declarations.py already declares, so they are left out here.
+
+    Only real declarations may count: the file also *mentions* functions in
+    comments ("calls calldata_get_data() with the right size"), and counting a
+    mention drops the function from both files — which is how calldata_get_data,
+    gs_clear and obs_source_output_video vanished on the 32.2.2 regeneration.
+    tests/unit/test_api_32_2.py checks every name returned here is really declared.
+    """
+    text = strip_comments((ROOT / "pylibobs" / "_declarations.py").read_text(encoding="utf-8"))
+    text = re.sub(r"(?m)^\s*#.*$", "", text)
+    fre = re.compile(r"\b([A-Za-z_][\w]+)\s*\(")
+    return {m.group(1) for m in fre.finditer(text) if m.group(1).startswith(PUBLIC_PREFIXES)}
+
+
 def main():
     if not HEADERS_ROOT.exists():
         sys.exit(f"Headers directory not found: {HEADERS_ROOT}\n"
@@ -155,14 +174,8 @@ def main():
                  "https://github.com/obsproject/obs-studio/archive/refs/tags/<ver>.tar.gz\n"
                  "  tar -xzf obs-source.tar.gz")
 
-    public = {e for e in list_dll_exports()
-              if e.startswith(("obs_", "gs_", "signal_", "proc_", "calldata_",
-                               "audio_output_", "video_output_"))}
-    decls_text = (ROOT / "pylibobs" / "_declarations.py").read_text(encoding="utf-8")
-    fre = re.compile(r"\b([A-Za-z_][\w]+)\s*\(")
-    have = {m.group(1) for m in fre.finditer(decls_text)
-            if m.group(1).startswith(("obs_","gs_","signal_","proc_","calldata_",
-                                       "audio_output_","video_output_"))}
+    public = {e for e in list_dll_exports() if e.startswith(PUBLIC_PREFIXES)}
+    have = curated_names()
     missing = public - have
 
     found = {}
@@ -180,10 +193,13 @@ def main():
     with open(out_path, "w", encoding="utf-8") as f:
         f.write('"""Auto-generated cffi declarations for obs.dll. Do not edit."""\n\n')
         f.write('PREAMBLE = """\n')
+        f.write("    /* Opaque struct types referenced by extracted signatures */\n")
         for s in sorted(structs):
             f.write(f"    struct {s};\n")
+        f.write("\n    /* Opaque enums (treated as int) */\n")
         for e in sorted(enums):
             f.write(f"    typedef int {e}_enum_stub; /* enum {e} */\n")
+        f.write("\n    /* Opaque typedefs ending in _t */\n")
         for t in sorted(typedefs):
             base = t[:-2] if t.endswith("_t") else t
             f.write(f"    typedef struct {base}_s *{t};\n")
