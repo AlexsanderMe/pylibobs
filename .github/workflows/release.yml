@@ -8,6 +8,27 @@ on:
 
 jobs:
   # --------------------------------------------------------------------
+  # pylibobs X.Y.Z bundles libobs X.Y.Z; pylibobs-only releases on the same
+  # libobs add a fourth number (X.Y.Z.N). A PyPI upload can't be redone, so
+  # refuse to build anything unless the tag, both version strings and the
+  # OBS pin in fetch_libs.py agree with that scheme.
+  # --------------------------------------------------------------------
+  check-version:
+    name: Check version matches tag and libobs pin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compare tag, pyproject, __version__ and DEFAULT_OBS_TAG
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: python scripts/check_version.py
+        shell: bash
+
+  # --------------------------------------------------------------------
   # Build platform-specific wheels.
   # Each wheel bundles the libobs binaries downloaded by fetch_libs.py,
   # so end users `pip install pylibobs` and it Just Works™ — no OBS
@@ -15,6 +36,7 @@ jobs:
   # --------------------------------------------------------------------
   build-wheels:
     name: Build wheel / ${{ matrix.os }}
+    needs: check-version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -168,6 +190,7 @@ jobs:
   # --------------------------------------------------------------------
   build-sdist:
     name: Build sdist
+    needs: check-version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -216,7 +239,9 @@ jobs:
   github-release:
     name: GitHub release
     runs-on: ubuntu-latest
-    needs: [build-wheels, build-sdist]
+    # Only after PyPI accepted the upload, so the GitHub release always holds
+    # exactly what PyPI serves (v0.1.2's assets were rebuilt after a failed publish).
+    needs: [publish]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write

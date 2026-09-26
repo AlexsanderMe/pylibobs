@@ -91,7 +91,7 @@ from .enumeration import (
     set_audio_monitoring_device, get_audio_monitoring_device,
 )
 
-__version__ = "0.1.2"
+__version__ = "32.2.2"
 __all__ = [
     "OBSContext",
     "NixPlatform",
