@@ -58,6 +58,20 @@ class BdistWheel(_BdistWheel):
                 plat = plat.replace("universal2", "arm64")
             elif host_arch in ("x86_64", "amd64"):
                 plat = plat.replace("universal2", "x86_64")
+        # The bundled OBS runtime can require a newer OS than the Python
+        # interpreter used to build the wheel. Never advertise Python's lower
+        # deployment target for those native libraries.
+        if plat.startswith("macosx_"):
+            import json
+            import platform as _platform
+            from pathlib import Path
+            arch = {"aarch64": "arm64", "amd64": "x86_64"}.get(
+                _platform.machine().lower(), _platform.machine().lower())
+            manifest = Path(__file__).parent / "pylibobs/_libs/macos" / arch / "runtime.json"
+            if manifest.is_file():
+                minimum = json.loads(manifest.read_text())["macos_deployment_target"]
+                major, minor, *_ = [int(part) for part in minimum.split(".")]
+                plat = f"macosx_{major}_{minor}_{arch}"
         return "py3", "none", plat
 
 

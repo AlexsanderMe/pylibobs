@@ -47,6 +47,7 @@ _SYSTEM_FALLBACK_PATHS = {
         "/usr/local/lib/libobs.so.0",
     ],
     "Darwin": [
+        "/Applications/OBS.app/Contents/Frameworks/libobs.framework/Versions/A/libobs",
         "/Applications/OBS.app/Contents/Frameworks/libobs.0.dylib",
         "/usr/local/lib/libobs.dylib",
         "/opt/homebrew/lib/libobs.dylib",
@@ -64,7 +65,7 @@ def _bundled_path() -> str | None:
     Layout per platform:
       windows/<arch>/obs.dll            (alongside zlib, w32-pthreads, etc.)
       linux/<arch>/libobs.so.0          (plus obs-plugins/ and data/ siblings)
-      macos/<arch>/Frameworks/libobs.dylib
+      macos/<arch>/Frameworks/libobs.framework/Versions/A/libobs
                               (@rpath deps live alongside it in Frameworks/)
     """
     system = platform.system()
@@ -77,11 +78,14 @@ def _bundled_path() -> str | None:
 
     base = _LIBS_DIR / subdir / arch
     # Try the most-likely path first per platform
-    candidates = [
+    candidates = []
+    if system == "Darwin":
+        candidates.append(base / "Frameworks/libobs.framework/Versions/A/libobs")
+    candidates.extend([
         base / lib_name,                          # win/linux flat layout
         base / "Frameworks" / lib_name,           # macOS .app layout
         base / "Frameworks" / "libobs.0.dylib",   # macOS versioned alias
-    ]
+    ])
     for c in candidates:
         if c.exists():
             return str(c)
@@ -206,6 +210,31 @@ def prepare_dll_search_path(libobs_path: str) -> None:
     _stage_helpers_next_to_host(lib_dir)
 
 
+def _bundled_root(libobs_path: Path) -> Path | None:
+    """Find the platform/architecture root, including framework executables."""
+    for parent in libobs_path.resolve().parents:
+        if parent.parent.parent == _LIBS_DIR.resolve():
+            return parent
+    return None
+
+
+def get_graphics_module() -> str:
+    """Resolve the macOS renderer beside the loaded framework, or its OS name."""
+    system = platform.system()
+    if system == "Darwin":
+        try:
+            libobs_path = Path(find_libobs()).resolve()
+        except ImportError:
+            return "libobs-opengl"
+        for parent in libobs_path.parents:
+            if parent.name == "Frameworks":
+                candidate = parent / "libobs-opengl.dylib"
+                if candidate.is_file():
+                    return str(candidate)
+                break
+    return "libobs-d3d11" if system == "Windows" else "libobs-opengl"
+
+
 def get_obs_data_dir() -> str | None:
     """
     Return the OBS data directory (containing libobs/ shader effects),
@@ -226,11 +255,13 @@ def get_obs_data_dir() -> str | None:
     except ImportError:
         return None
 
-    # Co-located bundled data (same directory as the DLL)
-    for candidate in [
+    bundled_root = _bundled_root(libobs_path)
+    candidates = [bundled_root / "data"] if bundled_root is not None else []
+    candidates.extend([
         libobs_path.parent / "data",
         libobs_path.parent.parent.parent / "data",  # OBS install layout
-    ]:
+    ])
+    for candidate in candidates:
         if candidate.exists():
             return str(candidate)
 
@@ -264,8 +295,9 @@ def get_obs_module_dirs() -> tuple[str, str]:
     lib_dir = libobs_path.parent
 
     # 1. Bundled layout (fetch_libs.py extracts plugins next to obs.dll)
-    bundled_plugins = lib_dir / "obs-plugins"
-    bundled_data = lib_dir / "data" / "obs-plugins" / "%module%"
+    root = _bundled_root(libobs_path) or lib_dir
+    bundled_plugins = root / "obs-plugins"
+    bundled_data = root / "data" / "obs-plugins" / "%module%"
     if bundled_plugins.exists():
         return str(bundled_plugins), str(bundled_data)
 

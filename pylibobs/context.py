@@ -20,7 +20,7 @@ from ._ffi import ffi, get_lib, mark_alive, mark_dead, release_all_wrappers
 
 # libobs MAX_CHANNELS is 64 in the public ABI; conservatively clear that many.
 _MAX_OUTPUT_CHANNELS = 64
-from ._lib import get_bundled_modules, get_obs_data_dir, get_obs_module_dirs
+from ._lib import get_bundled_modules, get_graphics_module, get_obs_data_dir, get_obs_module_dirs
 
 
 class VideoFormat(IntEnum):
@@ -75,19 +75,17 @@ class VideoRange(IntEnum):
 
 
 _VIDEO_INIT_ERR = {
-    0:  "success",
-    -1: "not supported (check graphics driver/module)",
-    -2: "invalid parameters",
-    -3: "video already active",
-    -4: "graphics module not found",
-    -5: "general failure",
+    ffi.typeof("enum obs_video_err").relements[name]: reason
+    for name, reason in {
+        "OBS_VIDEO_SUCCESS": "success",
+        "OBS_VIDEO_FAIL": "general failure",
+        "OBS_VIDEO_NOT_SUPPORTED": "not supported (check graphics driver/module)",
+        "OBS_VIDEO_INVALID_PARAM": "invalid parameters",
+        "OBS_VIDEO_CURRENTLY_ACTIVE": "video already active",
+        "OBS_VIDEO_MODULE_NOT_FOUND": "graphics module not found",
+    }.items()
 }
 
-_DEFAULT_GRAPHICS_MODULE = {
-    "Windows": "libobs-d3d11",
-    "Linux":   "libobs-opengl",
-    "Darwin":  "libobs-opengl",
-}
 
 
 class NixPlatform(IntEnum):
@@ -144,6 +142,8 @@ class OBSContext:
         self._locale = locale
         self._module_config_path = module_config_path or _default_config_dir()
         self._started = False
+        # obs_video_info retains the supplied graphics_module pointer.
+        self._graphics_module_buffers: dict[str, object] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -226,6 +226,7 @@ class OBSContext:
         finally:
             mark_dead()
             self._started = False
+            self._graphics_module_buffers.clear()
 
     # ------------------------------------------------------------------
     # Video / audio reset
@@ -250,8 +251,10 @@ class OBSContext:
         lib = get_lib()
         ovi = ffi.new("struct obs_video_info *")
 
-        gfx = graphics_module or _DEFAULT_GRAPHICS_MODULE.get(platform.system(), "libobs-opengl")
-        ovi.graphics_module = ffi.new("char[]", gfx.encode())
+        gfx = graphics_module or get_graphics_module()
+        if gfx not in self._graphics_module_buffers:
+            self._graphics_module_buffers[gfx] = ffi.new("char[]", gfx.encode())
+        ovi.graphics_module = self._graphics_module_buffers[gfx]
         ovi.fps_num        = fps_num
         ovi.fps_den        = fps_den
         ovi.base_width     = width
