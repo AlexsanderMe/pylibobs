@@ -64,6 +64,8 @@ exclude  = ["tests*", "examples*", "scripts*"]
 [tool.setuptools.package-data]
 # Include every bundled libobs binary + data file in the wheel.
 pylibobs = [
+    "native/*.m",
+    "native/*.dylib",
     "_libs/**/*",
     "_libs/**/.*",
 ]

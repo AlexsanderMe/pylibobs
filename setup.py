@@ -24,6 +24,10 @@ Together these produce wheels like:
 """
 from setuptools import setup
 from setuptools.dist import Distribution
+from setuptools.command.build_py import build_py as _BuildPy
+import sys
+import subprocess
+from pathlib import Path
 
 try:                              # setuptools >= 70
     from setuptools.command.bdist_wheel import bdist_wheel as _BdistWheel
@@ -37,6 +41,45 @@ class BinaryDistribution(Distribution):
         return True
     def is_pure(self):
         return False
+
+
+class BuildPy(_BuildPy):
+    _native_library = Path("native/macos_surfaces.dylib")
+
+    def _native_paths(self):
+        package = Path(self.get_package_dir("pylibobs"))
+        return package / self._native_library, Path(self.build_lib) / "pylibobs" / self._native_library
+
+    def get_outputs(self, include_bytecode=True):
+        outputs = super().get_outputs(include_bytecode)
+        if sys.platform == "darwin":
+            _, destination = self._native_paths()
+            if str(destination) not in outputs:
+                outputs.append(str(destination))
+        return outputs
+
+    def get_output_mapping(self):
+        mapping = super().get_output_mapping()
+        if sys.platform == "darwin" and self.editable_mode:
+            source, destination = self._native_paths()
+            mapping[str(destination)] = str(source)
+        return mapping
+
+    def run(self):
+        super().run()
+        if sys.platform == "darwin":
+            source, destination = self._native_paths()
+            # Editable imports resolve to the source package, including helpers.
+            if self.editable_mode:
+                destination = source
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.check_call([
+                "clang", "-dynamiclib", "-O2", "-Wall", "-Wextra", "-Werror",
+                "-Wno-deprecated-declarations", "-mmacosx-version-min=13.0",
+                "-framework", "Cocoa", "-framework", "IOSurface", "-framework", "OpenGL",
+                str(source.with_suffix(".m")), "-o", str(destination),
+            ])
+            subprocess.check_call(["codesign", "--force", "--sign", "-", str(destination)])
 
 
 class BdistWheel(_BdistWheel):
@@ -63,5 +106,5 @@ class BdistWheel(_BdistWheel):
 
 setup(
     distclass=BinaryDistribution,
-    cmdclass={"bdist_wheel": BdistWheel},
+    cmdclass={"bdist_wheel": BdistWheel, "build_py": BuildPy},
 )

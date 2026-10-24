@@ -184,10 +184,43 @@ pylibobs/
 
 ## Coverage / known gaps
 
-`pylibobs` targets **libobs 32.2.2** and declares every function it exports (1384
+### macOS surface delivery
+
+`pylibobs.macos_surfaces.SurfacePresenter(nsview)` presents in a borrowed,
+same-process `NSView`. Create, poll and close it on the Cocoa main thread,
+closing it before destroying the parent view. The presenter does not initialize
+libobs and has no GUI toolkit dependency. Give its random `endpoint` to a
+`SurfaceProducer(endpoint, width, height)` in the process running libobs.
+
+Call `producer.render(source, canvas_width=..., canvas_height=...)` from the
+render loop and `presenter.poll()` from the consumer's event loop. Scenes and
+transitions are ordinary sources; `None` explicitly presents opaque black.
+The source is borrowed for the entire render call, including graphics-lock waits
+and `before_render`. Keep its native owner alive and synchronize release with
+the render loop. If the callback invalidates the source, it must veto rendering.
+The binding transfers IOSurface rights through Mach messages, never foreign
+view pointers or Python frame buffers. Three in-flight buffers bound memory;
+a busy consumer drops new frames and polling keeps the newest available frame.
+The exported image uses top-left orientation and is letterboxed by the presenter.
+
+Remove owned render callbacks and close the producer before shutting down OBS.
+Replacing a producer changes its dimensions; replacing a presenter gives it a
+fresh endpoint. OpenGL writes and reads finish before buffer handoff/reuse.
+This avoids CPU pixel readback but includes GPU synchronization; software
+renderers can still be slow. Native integration depends on the macOS runtime
+fixes, and macOS wheels compile the Cocoa library during their build.
+`presenter.last_frame_latency_ms` measures the last frame from render entry to
+GPU presentation completion using the shared monotonic clock; it excludes scanout.
+
+Run `examples/macos_surface_smoke.py` to validate two-process pixels, resizing,
+backpressure and timing. It requires PyObjC only for the example's native window.
+
+### API declarations
+
+`pylibobs` targets **libobs 32.2.2** and declares its exported
 `obs_*` / `gs_*` / `signal_*` / `proc_*` / `calldata_*` / `audio_output_*` / `video_output_*`
-symbols), reachable via `pylibobs._ffi.get_lib()`. 1157 of them carry their full C
-signature; the remaining 227 are declared as `void f(void)` placeholders because
+symbols, reachable via `pylibobs._ffi.get_lib()`. Some functions carry their full C
+signature; others are declared as `void f(void)` placeholders because
 `scripts/generate_cdef.py` cannot parse their headers yet — they resolve, but need a
 curated signature in `_declarations.py` before they can be called correctly.
 Pythonic class-based wrappers cover the common workflows:
