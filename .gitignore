@@ -64,6 +64,7 @@ scripts/.fetch_cache/
 *.exp
 *.lib
 wheelhouse/
+pylibobs/native/*.dylib
 
 # --------------------------------------------------------------------------
 # Test / example outputs
