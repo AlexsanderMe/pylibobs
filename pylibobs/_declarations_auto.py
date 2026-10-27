@@ -20,7 +20,6 @@ PREAMBLE = """
     struct obs_encoder_info;
     struct obs_hotkeys_translations;
     struct obs_key_event;
-    struct obs_module_failure_info;
     struct obs_mouse_event;
     struct obs_output_info;
     struct obs_scene_item;
@@ -46,7 +45,6 @@ PREAMBLE = """
     typedef int gs_cull_mode_enum_stub; /* enum gs_cull_mode */
     typedef int gs_depth_test_enum_stub; /* enum gs_depth_test */
     typedef int gs_draw_mode_enum_stub; /* enum gs_draw_mode */
-    typedef int gs_image_alpha_mode_enum_stub; /* enum gs_image_alpha_mode */
     typedef int gs_index_type_enum_stub; /* enum gs_index_type */
     typedef int gs_stencil_op_type_enum_stub; /* enum gs_stencil_op_type */
     typedef int gs_stencil_side_enum_stub; /* enum gs_stencil_side */
@@ -69,22 +67,14 @@ PREAMBLE = """
     typedef struct add_window_cb_s *add_window_cb;
     typedef struct audio_input_callback_s *audio_input_callback_t;
     typedef struct audio_resampler_s *audio_resampler_t;
-    typedef struct bitmap_callbacks_s *bitmap_callbacks;
-    typedef struct bitmap_create_s *bitmap_create;
     typedef struct cf_token_array_s *cf_token_array_t;
     typedef struct config_s *config_t;
+    typedef struct create_s *create;
     typedef struct device_luid_cb_s *device_luid_cb;
     typedef struct display_s *display;
     typedef struct encoded_callback_s *encoded_callback_t;
     typedef struct ep_param_array_s *ep_param_array_t;
     typedef struct ep_var_array_s *ep_var_array_t;
-    typedef struct gif_bitmap_cb_create_s *gif_bitmap_cb_create;
-    typedef struct gif_bitmap_cb_destroy_s *gif_bitmap_cb_destroy;
-    typedef struct gif_bitmap_cb_get_buffer_s *gif_bitmap_cb_get_buffer;
-    typedef struct gif_bitmap_cb_modified_s *gif_bitmap_cb_modified;
-    typedef struct gif_bitmap_cb_set_opaque_s *gif_bitmap_cb_set_opaque;
-    typedef struct gif_bitmap_cb_test_opaque_s *gif_bitmap_cb_test_opaque;
-    typedef struct gif_result_s *gif_result;
     typedef struct global_signal_callback_s *global_signal_callback_t;
     typedef struct graphics_s *graphics_t;
     typedef struct gs_device_s *gs_device_t;
@@ -93,10 +83,6 @@ PREAMBLE = """
     typedef struct gs_effect_s *gs_effect_t;
     typedef struct gs_eparam_s *gs_eparam_t;
     typedef struct gs_epass_s *gs_epass_t;
-    typedef struct gs_image_file2_s *gs_image_file2_t;
-    typedef struct gs_image_file3_s *gs_image_file3_t;
-    typedef struct gs_image_file4_s *gs_image_file4_t;
-    typedef struct gs_image_file_s *gs_image_file_t;
     typedef struct gs_indexbuffer_s *gs_indexbuffer_t;
     typedef struct gs_samplerstate_s *gs_samplerstate_t;
     typedef struct gs_shader_s *gs_shader_t;
@@ -112,7 +98,12 @@ PREAMBLE = """
     typedef struct input_s *input_t;
     typedef struct log_handler_s *log_handler_t;
     typedef struct lookup_s *lookup_t;
+    typedef struct lzw_result_s *lzw_result;
     typedef struct media_remux_job_s *media_remux_job_t;
+    typedef struct nsgif_bitmap_fmt_s *nsgif_bitmap_fmt_t;
+    typedef struct nsgif_bitmap_s *nsgif_bitmap_t;
+    typedef struct nsgif_error_s *nsgif_error;
+    typedef struct nsgif_s *nsgif_t;
     typedef struct obs_canvas_s *obs_canvas_t;
     typedef struct obs_destroy_cb_s *obs_destroy_cb;
     typedef struct obs_encoder_group_s *obs_encoder_group_t;
@@ -178,6 +169,8 @@ PREAMBLE = """
     typedef struct tick_avg_s *tick_avg;
     typedef struct util_uint128_s *util_uint128_t;
     typedef struct video_scaler_s *video_scaler_t;
+    typedef struct width_s *width;
+    typedef struct x0_s *x0;
 """
 
 AUTO_DECLS = """
@@ -271,20 +264,6 @@ AUTO_DECLS = """
     enum gs_texture_type gs_get_texture_type(const gs_texture_t *texture);
     void gs_get_viewport(struct gs_rect *rect);
     uint32_t gs_get_width(void);
-    void gs_image_file2_init(gs_image_file2_t *if2, const char *file);
-    bool gs_image_file2_tick(gs_image_file2_t *if2, uint64_t elapsed_time_ns);
-    void gs_image_file2_update_texture(gs_image_file2_t *if2);
-    void gs_image_file3_init(gs_image_file3_t *if3, const char *file, enum gs_image_alpha_mode alpha_mode);
-    bool gs_image_file3_tick(gs_image_file3_t *if3, uint64_t elapsed_time_ns);
-    void gs_image_file3_update_texture(gs_image_file3_t *if3);
-    void gs_image_file4_init(gs_image_file4_t *if4, const char *file, enum gs_image_alpha_mode alpha_mode);
-    bool gs_image_file4_tick(gs_image_file4_t *if4, uint64_t elapsed_time_ns);
-    void gs_image_file4_update_texture(gs_image_file4_t *if4);
-    void gs_image_file_free(gs_image_file_t *image);
-    void gs_image_file_init(gs_image_file_t *image, const char *file);
-    void gs_image_file_init_texture(gs_image_file_t *image);
-    bool gs_image_file_tick(gs_image_file_t *image, uint64_t elapsed_time_ns);
-    void gs_image_file_update_texture(gs_image_file_t *image);
     void gs_indexbuffer_destroy(gs_indexbuffer_t *indexbuffer);
     void gs_indexbuffer_flush(gs_indexbuffer_t *indexbuffer);
     void gs_indexbuffer_flush_direct(gs_indexbuffer_t *indexbuffer, const void *data);
@@ -415,7 +394,6 @@ AUTO_DECLS = """
     uint32_t gs_voltexture_get_height(const gs_texture_t *voltex);
     uint32_t gs_voltexture_get_width(const gs_texture_t *voltex);
     void gs_zstencil_destroy(gs_zstencil_t *zstencil);
-    void obs_add_core_module(const char *name);
     void obs_add_disabled_module(const char *name);
     void obs_add_main_rendered_callback(void (*rendered)(void *param), void *param);
     void obs_add_raw_video_callback2(const struct video_scale_info *conversion, uint32_t frame_rate_divisor, void (*callback)(void *param, struct video_data *frame), void *param);
@@ -436,6 +414,7 @@ AUTO_DECLS = """
     void obs_canvas_scene_remove(obs_scene_t *scene);
     void obs_canvas_set_channel(obs_canvas_t *canvas, uint32_t channel, obs_source_t *source);
     void obs_canvas_set_name(obs_canvas_t *canvas, const char *name);
+    bool obs_canvas_video_active(obs_canvas_t *canvas);
     bool obs_create_disabled_module(obs_module_t **module, const char *path, const char *data_path, enum obs_module_load_state state);
     void obs_data_array_enum(obs_data_array_t *array, void (*cb)(obs_data_t *data, void *param), void *param);
     void obs_data_array_push_back_array(obs_data_array_t *array, obs_data_array_t *array2);
@@ -609,12 +588,14 @@ AUTO_DECLS = """
     void obs_hotkeys_load_output(obs_output_t *output, obs_data_t *hotkeys);
     void obs_hotkeys_load_service(obs_service_t *service, obs_data_t *hotkeys);
     void obs_hotkeys_load_source(obs_source_t *source, obs_data_t *hotkeys);
-    void obs_hotkeys_set_audio_hotkeys_translations(const char *mute, const char *unmute, const char *push_to_mute, const char *push_to_talk);
+    void obs_hotkeys_set_audio_hotkeys_translations(const char *mute, const char *unmute, const char *push_to_mute, const char *push_to_talk, const char *monitor_on, const char *monitor_off);
     void obs_hotkeys_set_sceneitem_hotkeys_translations(const char *show, const char *hide);
     void obs_hotkeys_set_translations_s(struct obs_hotkeys_translations *translations, size_t size);
     bool obs_in_task_thread(enum obs_task_type type);
     bool obs_init_module(obs_module_t *module);
     void obs_init_win32_crash_handler(void);
+    bool obs_is_core_module(obs_module_t *module);
+    bool obs_is_legacy_module(obs_module_t *module);
     bool obs_is_output_protocol_registered(const char *protocol);
     bool obs_is_source_configurable(const char *id);
     void obs_key_combination_to_str(obs_key_combination_t key, struct dstr *str);
@@ -623,6 +604,7 @@ AUTO_DECLS = """
     int obs_key_to_virtual_key(obs_key_t key);
     void obs_leave_graphics(void);
     void obs_load_all_modules2(struct obs_module_failure_info *mfi);
+    bool obs_load_core_modules(void);
     void obs_log_loaded_modules(void);
     void obs_missing_file_destroy(obs_missing_file_t *file);
     void obs_missing_file_issue_callback(obs_missing_file_t *file, const char *new_path);
@@ -635,7 +617,6 @@ AUTO_DECLS = """
     void obs_module_add_output(obs_module_t *module, const char *id);
     void obs_module_add_service(obs_module_t *module, const char *id);
     void obs_module_add_source(obs_module_t *module, const char *id);
-    void obs_module_failure_info_free(struct obs_module_failure_info *mfi);
     bool obs_module_get_locale_string(const obs_module_t *mod, const char *lookup_string, const char **translated_string);
     float obs_mul_to_db(float mul);
     bool obs_nv12_tex_active(void);
@@ -1026,7 +1007,6 @@ STUB_DECLS = """
     void obs_get_latest_input_type_id(void);
     void obs_get_main_canvas(void);
     void obs_get_main_texture(void);
-    void obs_get_module(void);
     void obs_get_module_author(void);
     void obs_get_module_binary_path(void);
     void obs_get_module_data_path(void);

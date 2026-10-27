@@ -8,7 +8,7 @@ that declares every opaque type referenced.
 Usage:
     cd <repo root>
     # Download + extract libobs source under obs-studio-<ver>/
-    python scripts/generate_cdef.py [obs-studio-<ver>/libobs]
+    python scripts/generate_cdef.py [obs-studio-<ver>/libobs] [path/to/obs.dll]
 """
 
 from __future__ import annotations
@@ -19,8 +19,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-HEADERS_ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "obs-studio-32.1.2" / "libobs"
-DLL = ROOT / "pylibobs/_libs/windows/x86_64/obs.dll"
+HEADERS_ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "obs-studio-33.0.0" / "libobs"
+#: obs.dll of the same release: its export table says which functions exist.
+#: Defaults to the Windows bundle fetch_libs.py writes; pass another path as the
+#: second argument to avoid fetching the whole Windows bundle.
+DLL = Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / "pylibobs/_libs/windows/x86_64/obs.dll"
 
 
 def list_dll_exports() -> set[str]:
@@ -109,15 +112,21 @@ ALREADY_TYPES = {
     "raw_video_callback_t","obs_render_callback_t","obs_tick_callback_t",
     "obs_source_enum_filters_cb_t","obs_source_enum_proc_t",
     "obs_encoder_roi_cb_t","obs_output_packet_cb_t",
+    # Value types libobs writes into caller-allocated memory: an opaque pointer
+    # typedef here would make callers allocate 8 bytes where libobs writes the
+    # whole struct (gs_image_file_ex is 72 bytes). Declared in _declarations.py.
+    "gs_image_file_ex_t",
     "obs_display_draw_callback_t","obs_load_source_cb","obs_hotkey_enum_func",
 }
 ALREADY_STRUCTS = {
     "obs_video_info","obs_audio_info","gs_window","gs_init_data","calldata",
     "obs_key_combination","vec2","video_data","audio_data","video_scale_info",
     "obs_transform_info","obs_sceneitem_crop","obs_encoder_roi","encoder_packet",
+    "obs_module_failure_info","obs_runtime_module_info","obs_runtime_module_path",
+    "gs_image_file_ex",
 }
 ALREADY_ENUMS = {
-    "obs_video_err","video_format","speaker_layout","obs_scale_type",
+    "obs_video_err","video_format","speaker_layout","obs_scale_type","obs_runtime_module_type",
     "video_colorspace","video_range_type","obs_encoder_type","obs_output_flags",
     "gs_color_format","gs_zstencil_format","obs_transition_mode",
     "obs_peak_meter_type","obs_fader_type","obs_bounds_type",

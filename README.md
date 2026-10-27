@@ -46,6 +46,15 @@ That's it on Windows / macOS / Linux. The wheel ships with **bundled libobs bina
 plus its plugin DLLs and data files, sourced from the official OBS Studio release on PyPI's
 build server). You don't need to install OBS Studio.
 
+**Linux:** pylibobs 33 bundles OBS 33's official Linux build, which OBS publishes for Ubuntu
+26.04 only. The wheel needs **glibc 2.43+** and the system FFmpeg 8 / x264 libraries of that
+generation (Ubuntu 26.04 or newer, or an equally recent distribution). On older systems pip
+cannot use the wheel; install the last release for OBS 32 instead:
+
+```bash
+pip install "pylibobs<33"
+```
+
 If you're installing from sdist (rare — only when no wheel is published for your platform), or
 you want to use a system-installed OBS, the loader falls back through:
 
@@ -59,7 +68,7 @@ Maintainers / contributors can refresh the bundled libs by running:
 ```bash
 python scripts/fetch_libs.py                  # current platform
 python scripts/fetch_libs.py --all            # every platform
-python scripts/fetch_libs.py --version 32.2.2 # pin OBS version
+python scripts/fetch_libs.py --version 33.0.0 # pin OBS version
 ```
 
 This downloads libobs from the official OBS GitHub release. The `_libs/` tree is `.gitignore`d
@@ -182,12 +191,29 @@ pylibobs/
 
 ---
 
+## Moving from pylibobs 32 (OBS 32) to 33
+
+- **Audio monitoring is on/off.** OBS 33 replaced the three monitoring types with
+  `obs_source_set/get_monitoring_enabled` (the old calls are deprecated). Use
+  `Source.monitoring_enabled`. *Monitor only* (heard, but kept out of recordings and streams)
+  is now monitoring plus mute: `Source.set_monitor_only()`.
+- **Old scene collections:** a source saved with *monitor only* loads in OBS 33 as monitored
+  **and** in the output — its audio now reaches recordings and streams. Mute those sources (or
+  call `set_monitor_only()`) after loading if that matters.
+- **Plugins moved** to `obs-modules/core/` (Linux), `core/<module>/` (Windows) and
+  `PlugIns/*.plugin` (macOS). pylibobs finds them in all of these and in the 32.x layouts;
+  `OBSContext.failed_modules` lists any module that would not load.
+- **Images:** the `gs_image_file`/`2`/`3`/`4` functions are gone; raw callers use
+  `gs_image_file_ex_*` (`ffi.new("gs_image_file_ex_t *")`).
+- `obs_add_core_module` was removed; `obs_source_set_hidden` / `is_hidden` and
+  `obs_load_all_modules` are deprecated (the latter does nothing any more).
+
 ## Coverage / known gaps
 
-`pylibobs` targets **libobs 32.2.2** and declares every function it exports (1384
+`pylibobs` targets **libobs 33.0.0** and declares every function it exports (1381
 `obs_*` / `gs_*` / `signal_*` / `proc_*` / `calldata_*` / `audio_output_*` / `video_output_*`
-symbols), reachable via `pylibobs._ffi.get_lib()`. 1157 of them carry their full C
-signature; the remaining 227 are declared as `void f(void)` placeholders because
+symbols), reachable via `pylibobs._ffi.get_lib()`. 1155 of them carry their full C
+signature; the remaining 226 are declared as `void f(void)` placeholders because
 `scripts/generate_cdef.py` cannot parse their headers yet — they resolve, but need a
 curated signature in `_declarations.py` before they can be called correctly.
 Pythonic class-based wrappers cover the common workflows:
@@ -195,7 +221,7 @@ Pythonic class-based wrappers cover the common workflows:
 - Lifecycle, video/audio init, scenes, sources, scene items, transforms (pos/scale/rot/crop/bounds)
 - Outputs (file + RTMP streaming), encoders (incl. ROI hints and `EncoderCaps`), services
 - Live preview (`Display` attached to a native window via HWND)
-- Filters, transitions, hotkeys, fader + VU meter, audio monitoring
+- Filters, transitions, hotkeys, fader + VU meter, audio monitoring (`Source.monitoring_enabled`, `set_monitor_only()`)
 - Type lookups: display names, defaults, encoder capabilities, themed source icons (32.2+)
 - Raw audio/video callbacks (numpy-friendly), audio resampler, media remux
 - Properties API (read + edit, with type-aware widgets in `examples/pylibobs_studio.py`)
@@ -240,7 +266,7 @@ A release that only changes pylibobs, on the same libobs, adds a fourth number
 1. Set the same version in `pyproject.toml` and `pylibobs/__init__.py`; when moving to a new
    libobs, also update `DEFAULT_OBS_TAG` in `scripts/fetch_libs.py`.
    `python scripts/check_version.py` checks they agree.
-2. Tag the commit `v<version>` (e.g. `v32.2.2`) and push the tag. GitHub Actions:
+2. Tag the commit `v<version>` (e.g. `v33.0.0`) and push the tag. GitHub Actions:
    - Refuses to build unless the tag, both version strings and `DEFAULT_OBS_TAG` agree
    - Builds platform-specific wheels with bundled libobs (Windows x64 / Linux x86_64 / macOS Apple Silicon)
    - Builds the sdist

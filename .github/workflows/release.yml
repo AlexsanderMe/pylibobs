@@ -45,7 +45,9 @@ jobs:
           - os: windows-latest
             target_os: windows
             target_arch: x86_64
-          - os: ubuntu-latest
+          # Pinned: OBS 33 ships its Linux build for Ubuntu 26.04 only, and the
+          # smoke-loading of the bundle needs that image's glibc and sonames.
+          - os: ubuntu-26.04
             target_os: linux
             target_arch: x86_64
           # Apple Silicon only — Apple stopped shipping Intel Macs in
@@ -105,25 +107,27 @@ jobs:
                   # contains no d3dcompiler at all. It is a Windows system
                   # component resolved from System32.
                   "obs-ffmpeg-mux.exe",
-                  "obs-plugins/obs-ffmpeg.dll",
-                  "obs-plugins/image-source.dll",
-                  "obs-plugins/obs-transitions.dll",
+                  # OBS 33: one core/<module>/ directory per plugin.
+                  "core/obs-ffmpeg/obs-ffmpeg.dll",
+                  "core/image-source/image-source.dll",
+                  "core/obs-transitions/obs-transitions.dll",
                   # win-dshow provides BOTH the camera input and virtualcam_output.
-                  "obs-plugins/win-dshow.dll",
+                  "core/win-dshow/win-dshow.dll",
                   # The DirectShow filter the conferencing app loads in-process;
                   # without it the vcam starts but no app can see it.
-                  "data/obs-plugins/win-dshow/obs-virtualcam-module64.dll",
-                  "data/obs-plugins/win-dshow/obs-virtualcam-module32.dll",
+                  "core/win-dshow/data/obs-virtualcam-module64.dll",
+                  "core/win-dshow/data/obs-virtualcam-module32.dll",
                   "data/libobs",
               ],
               "linux": [
                   "libobs.so*",
                   "libobs-opengl.so*",
-                  "obs-plugins/obs-ffmpeg.so",
-                  "obs-plugins/image-source.so",
-                  "obs-plugins/obs-transitions.so",
+                  # OBS 33: obs-modules/core/ (was obs-plugins/).
+                  "obs-modules/core/obs-ffmpeg.so",
+                  "obs-modules/core/image-source.so",
+                  "obs-modules/core/obs-transitions.so",
                   # linux-v4l2 registers virtualcam_output on Linux.
-                  "obs-plugins/linux-v4l2.so",
+                  "obs-modules/core/linux-v4l2.so",
                   "data/libobs",
               ],
               "macos": [
@@ -133,6 +137,8 @@ jobs:
                   # macOS keeps the shader effects inside the framework bundle
                   # rather than in a data/ tree like Windows and Linux.
                   "Frameworks/libobs.framework/Versions/A/Resources/*.effect",
+                  # Plugins are .plugin bundles (checked against the 33.0.0 dmg).
+                  "PlugIns/obs-ffmpeg.plugin/Contents/MacOS/obs-ffmpeg",
               ],
           }.get(target_os, [])
 
@@ -163,10 +169,11 @@ jobs:
       # PyPI rejects Linux wheels tagged `linux_*` — they must be `manylinux_*`.
       # Standard auditwheel-repair doesn't help here (it expects a C extension
       # to rewrite; we ship a pure-Python package with bundled .so's).
-      # Instead we directly rename the wheel's platform tag using `wheel tags`,
-      # which is enough for PyPI: the bundled libobs.so.0 was extracted from
-      # the official OBS Ubuntu 24.04 .deb so it's already manylinux-friendly
-      # for any glibc 2.31+ system (Ubuntu 20.04+, Debian 11+, RHEL 9+, …).
+      # Instead we directly rename the wheel's platform tag using `wheel tags`.
+      # The tag must state the real glibc floor: OBS 33's only Linux build is
+      # for Ubuntu 26.04, and its libobs.so.30 needs GLIBC_2.43 (obs-outputs
+      # 2.42), so pip installs it on glibc 2.43+ systems only. (32.x's tag of
+      # 2.31 understated that bundle's real floor of 2.34.)
       - name: Re-tag Linux wheel as manylinux
         if: runner.os == 'Linux'
         # `wheel tags --remove` deletes the original wheel and writes the
@@ -174,7 +181,7 @@ jobs:
         run: |
           pip install wheel
           for whl in dist/*-linux_*.whl; do
-            python -m wheel tags --platform-tag manylinux_2_31_x86_64 --remove "$whl"
+            python -m wheel tags --platform-tag manylinux_2_43_x86_64 --remove "$whl"
           done
           ls -la dist/
         shell: bash
