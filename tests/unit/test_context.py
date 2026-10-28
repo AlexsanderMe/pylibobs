@@ -14,7 +14,8 @@ def mock_lib():
     lib.obs_startup.return_value = True
     lib.obs_reset_video.return_value = 0   # OBS_VIDEO_SUCCESS
     lib.obs_reset_audio.return_value = True
-    lib.obs_get_version_string.return_value = b"30.0.0"
+    lib.obs_get_version_string.return_value = b"33.0.0"
+    lib.obs_get_version.return_value = 33 << 24
     return lib
 
 

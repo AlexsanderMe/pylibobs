@@ -211,8 +211,10 @@ def prepare_dll_search_path(libobs_path: str) -> None:
 
 
 def _bundled_root(libobs_path: Path) -> Path | None:
-    """Find the platform/architecture root, including framework executables."""
-    for parent in libobs_path.resolve().parents:
+    """Find the platform/architecture root above a bundled file or directory,
+    including the libobs framework executable."""
+    path = libobs_path.resolve()
+    for parent in (path, *path.parents):
         if parent.parent.parent == _LIBS_DIR.resolve():
             return parent
     return None
@@ -283,53 +285,108 @@ def get_obs_data_dir() -> str | None:
     return None
 
 
-def get_obs_module_dirs() -> tuple[str, str]:
-    """
-    Return (plugin_bin_dir, plugin_data_dir) for obs_add_module_path.
+#: Qt frontend plugins shipped with OBS Studio. They build Qt widgets and abort
+#: the process without a QApplication, which pylibobs never creates, so they
+#: are never loaded from a system install (bundles trim them already).
+QT_FRONTEND_MODULES = _QT_FRONTEND_MODULES = frozenset({
+    "frontend-tools", "decklink-output-ui", "decklink-captions",
+    "aja-output-ui", "obs-websocket",
+})
 
-    Tries the bundled layout first (pylibobs/_libs/.../obs-plugins/), then
-    falls back to the OS-standard OBS Studio install layout.
+
+def _module_layouts(lib_dir: Path) -> list[tuple[str, Path, str, bool]]:
+    """Places plugins may live, most specific first.
+
+    Each entry is ``(kind, base, data_template, bundled)``: ``kind`` says how
+    modules sit under ``base`` (see _layout_modules), ``data_template`` holds
+    ``%module%``. OBS 33 moved plugins from ``obs-plugins/`` to
+    ``obs-modules/core/`` (Linux), ``core/<module>/`` (Windows) and keeps them
+    in ``PlugIns/<module>.plugin`` on macOS; the 32.x layouts stay as fallbacks.
     """
     system = platform.system()
-    libobs_path = Path(find_libobs()).resolve()
-    lib_dir = libobs_path.parent
-
-    # 1. Bundled layout (fetch_libs.py extracts plugins next to obs.dll)
-    root = _bundled_root(libobs_path) or lib_dir
-    bundled_plugins = root / "obs-plugins"
-    bundled_data = root / "data" / "obs-plugins" / "%module%"
-    if bundled_plugins.exists():
-        return str(bundled_plugins), str(bundled_data)
-
-    # 2. OS-standard OBS install layout
+    layouts: list[tuple[str, Path, str, bool]] = []
     if system == "Windows":
-        obs_root = lib_dir.parent.parent  # bin/64bit/.. -> install root
-        return (
-            str(obs_root / "obs-plugins" / "64bit"),
-            str(obs_root / "data" / "obs-plugins" / "%module%"),
-        )
-
-    elif system == "Linux":
-        for bin_dir, data_dir in [
-            ("/usr/lib/x86_64-linux-gnu/obs-plugins", "/usr/share/obs/obs-plugins/%module%"),
-            ("/usr/lib/obs-plugins", "/usr/share/obs/obs-plugins/%module%"),
-            ("/usr/local/lib/obs-plugins", "/usr/local/share/obs/obs-plugins/%module%"),
-        ]:
-            if Path(bin_dir).exists():
-                return bin_dir, data_dir
-        return "/usr/lib/obs-plugins", "/usr/share/obs/obs-plugins/%module%"
-
+        layouts += [
+            ("per_dir", lib_dir / "core", str(lib_dir / "core" / "%module%" / "data"), True),
+            ("flat", lib_dir / "obs-plugins", str(lib_dir / "data" / "obs-plugins" / "%module%"), True),
+        ]
+        root = lib_dir.parent.parent            # <install>/bin/64bit -> <install>
+        layouts += [
+            ("per_dir", root / "core", str(root / "core" / "%module%" / "data"), False),
+            ("flat", root / "obs-plugins" / "64bit", str(root / "data" / "obs-plugins" / "%module%"), False),
+        ]
     elif system == "Darwin":
-        if "OBS.app" in str(lib_dir):
-            app_contents = lib_dir
-            while app_contents.name != "Contents" and app_contents != app_contents.parent:
-                app_contents = app_contents.parent
-            return (
-                str(app_contents / "Resources" / "obs-plugins"),
-                str(app_contents / "Resources" / "data" / "obs-plugins" / "%module%"),
-            )
-        return "/usr/local/lib/obs-plugins", "/usr/local/share/obs/obs-plugins/%module%"
+        # fetch_libs.py keeps libobs inside libobs.framework and flattens the
+        # plugins to <root>/obs-plugins/<module>.dylib beside data/obs-plugins/.
+        root = _bundled_root(lib_dir)
+        if root is not None:
+            layouts += [
+                ("flat", root / "obs-plugins", str(root / "data" / "obs-plugins" / "%module%"), True),
+            ]
+        layouts += [
+            ("macos", lib_dir.parent / "PlugIns" if lib_dir.name == "Frameworks" else lib_dir / "PlugIns", "", True),
+            ("flat", lib_dir / "obs-plugins", str(lib_dir / "data" / "obs-plugins" / "%module%"), True),
+            ("macos", Path("/Applications/OBS.app/Contents/PlugIns"), "", False),
+        ]
+    else:
+        layouts += [
+            ("flat", lib_dir / "obs-modules" / "core", str(lib_dir / "data" / "obs-modules" / "core" / "%module%"), True),
+            ("flat", lib_dir / "obs-plugins", str(lib_dir / "data" / "obs-plugins" / "%module%"), True),
+        ]
+        import sysconfig
+        multiarch = sysconfig.get_config_var("MULTIARCH") or "x86_64-linux-gnu"
+        for prefix in ("/usr/local", "/usr"):
+            for libsub in (f"lib/{multiarch}", "lib"):
+                layouts.append(("flat", Path(prefix) / libsub / "obs-modules" / "core",
+                                f"{prefix}/share/obs/obs-modules/core/%module%", False))
+        for prefix in ("/usr/local", "/usr"):
+            for libsub in (f"lib/{multiarch}", "lib"):
+                layouts.append(("flat", Path(prefix) / libsub / "obs-plugins",
+                                f"{prefix}/share/obs/obs-plugins/%module%", False))
+    return layouts
 
+
+def _layout_modules(kind: str, base: Path, data_template: str) -> list[tuple[str, str, str]]:
+    """``(name, binary, data_dir)`` for each module found in one layout."""
+    if not base.is_dir():
+        return []
+    suffix = _lib_suffix()
+    found: list[tuple[str, str, str]] = []
+    if kind == "flat":
+        for binary in sorted(base.glob(f"*{suffix}")):
+            name = binary.name[: -len(suffix)]
+            # Linux packages put CEF/GL helpers (libcef.so, libEGL.so, …) next
+            # to the modules; those are libraries, not OBS modules.
+            if name.startswith("lib"):
+                continue
+            found.append((name, str(binary), data_template.replace("%module%", name)))
+    elif kind == "per_dir":
+        for mod_dir in sorted(p for p in base.iterdir() if p.is_dir()):
+            binary = mod_dir / f"{mod_dir.name}{suffix}"
+            if binary.is_file():
+                found.append((mod_dir.name, str(binary), data_template.replace("%module%", mod_dir.name)))
+    elif kind == "macos":
+        for bundle in sorted(base.glob("*.plugin")):
+            name = bundle.name[: -len(".plugin")]
+            binary = bundle / "Contents" / "MacOS" / name
+            if binary.is_file():
+                found.append((name, str(binary), str(bundle / "Contents" / "Resources")))
+    return found
+
+
+def get_obs_module_dirs() -> tuple[str, str]:
+    """
+    Return ``(plugin_bin_dir, plugin_data_template)`` of the first plugin layout
+    that exists — the bundled one when present, else a system OBS install.
+
+    Kept for callers of the 32.x API. Since OBS 33 a layout is not always one
+    flat directory (Windows has ``core/<module>/``, macOS ``.plugin`` bundles),
+    so prefer :func:`discover_modules`, which lists the modules themselves.
+    """
+    lib_dir = Path(find_libobs()).resolve().parent
+    for _kind, base, data_template, _bundled in _module_layouts(lib_dir):
+        if base.is_dir():
+            return str(base), data_template
     return "", ""
 
 
@@ -337,34 +394,34 @@ def _lib_suffix() -> str:
     return {"Windows": ".dll", "Darwin": ".dylib"}.get(platform.system(), ".so")
 
 
+def discover_modules(*, include_system: bool = True) -> list[tuple[str, str, str]]:
+    """List the plugin modules to load, as ``(name, bin_path, data_path)``.
+
+    Uses the first layout that contains any module: the plugins bundled inside
+    the wheel when present, otherwise (if ``include_system``) a system OBS
+    install. Qt frontend plugins are left out of system installs: they abort the
+    process without a QApplication, which pylibobs never creates.
+    """
+    lib_dir = Path(find_libobs()).resolve().parent
+    libs_root = _LIBS_DIR.resolve()
+    for kind, base, data_template, bundled in _module_layouts(lib_dir):
+        if not bundled and not include_system:
+            continue
+        # Only treat a layout as bundled when it really sits inside our package.
+        if bundled and libs_root not in base.resolve().parents:
+            continue
+        modules = _layout_modules(kind, base, data_template)
+        if not bundled:
+            modules = [m for m in modules if m[0] not in _QT_FRONTEND_MODULES]
+        if modules:
+            return modules
+    return []
+
+
 def get_bundled_modules() -> list[tuple[str, str, str]]:
     """Enumerate the plugin modules bundled inside the wheel.
 
-    Returns a list of ``(name, bin_path, data_path)`` tuples — one per plugin
-    shared library under ``pylibobs/_libs/.../obs-plugins/`` — with ``name``
-    the module basename (no extension) and ``data_path`` the matching
-    ``data/obs-plugins/<name>`` directory.
-
-    Returns an empty list when no bundled plugin directory exists (i.e. we are
-    running against a system OBS install). Loading these explicitly lets us
-    avoid libobs's default module scan, which — on Linux especially — would
-    otherwise pick up a system OBS's Qt frontend plugins (``frontend-tools``,
-    ``decklink-output-ui``, …). Those abort the process because they construct
-    Qt widgets with no ``QApplication``, which pylibobs never creates.
+    Returns ``(name, bin_path, data_path)`` per module, or an empty list when
+    nothing is bundled (running against a system OBS install).
     """
-    bin_dir, data_tmpl = get_obs_module_dirs()
-    if not bin_dir:
-        return []
-    bin_path = Path(bin_dir)
-    # Only treat this as "bundled" when the plugins live inside our package.
-    # get_obs_module_dirs() resolve()s its result, so resolve _LIBS_DIR too.
-    if _LIBS_DIR.resolve() not in bin_path.resolve().parents or not bin_path.exists():
-        return []
-
-    suffix = _lib_suffix()
-    modules: list[tuple[str, str, str]] = []
-    for so in sorted(bin_path.glob(f"*{suffix}")):
-        name = so.name[: -len(suffix)]
-        data_path = data_tmpl.replace("%module%", name)
-        modules.append((name, str(so), data_path))
-    return modules
+    return discover_modules(include_system=False)

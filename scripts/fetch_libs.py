@@ -8,7 +8,7 @@ and may also be run by maintainers locally:
     python scripts/fetch_libs.py                       # current platform
     python scripts/fetch_libs.py --all                 # every platform
     python scripts/fetch_libs.py --platform linux --arch x86_64
-    python scripts/fetch_libs.py --version 32.2.2      # pin OBS version
+    python scripts/fetch_libs.py --version 33.0.0      # pin OBS version
 
 The bundled files are written under:
     pylibobs/_libs/<platform>/<arch>/
@@ -48,7 +48,7 @@ GITHUB_API = f"https://api.github.com/repos/{REPO}/releases"
 #: disagrees with `obs_get_version`, so custom modules must be built against
 #: THIS tag's headers and import lib. Tracking "latest" instead silently moves
 #: that target mid-build.
-DEFAULT_OBS_TAG = "32.2.2"
+DEFAULT_OBS_TAG = "33.0.0"
 LIBS_DIR   = Path(__file__).parent.parent / "pylibobs" / "_libs"
 
 # --------------------------------------------------------------------------
@@ -61,13 +61,15 @@ ASSET_PATTERNS: dict[tuple[str, str], dict] = {
     ("windows", "x86_64"): {
         "asset_re": r"OBS-Studio-[\d.]+-Windows-x64\.zip$",
         "kind": "zip",
-        # Self-contained: extract bin/, data/, obs-plugins/
+        # Self-contained: bin/64bit (libobs + deps), data/ (libobs effects) and,
+        # since OBS 33, core/<module>/ — one directory per plugin holding
+        # <module>.dll plus its data/ (32.x used obs-plugins/64bit/).
         "extract": {
             "bin/64bit/":         "",            # → _libs/.../
             "data/":              "data/",
-            "obs-plugins/64bit/": "obs-plugins/",
+            "core/":              "core/",
         },
-        "verify_file": "obs.dll",
+        "verify_file": ["obs.dll", "core/obs-ffmpeg/obs-ffmpeg.dll"],
     },
     ("windows", "arm64"): {
         "asset_re": r"OBS-Studio-[\d.]+-Windows-arm64\.zip$",
@@ -75,37 +77,39 @@ ASSET_PATTERNS: dict[tuple[str, str], dict] = {
         "extract": {
             "bin/64bit/":         "",
             "data/":              "data/",
-            "obs-plugins/64bit/": "obs-plugins/",
+            "core/":              "core/",
         },
-        "verify_file": "obs.dll",
+        "verify_file": ["obs.dll", "core/obs-ffmpeg/obs-ffmpeg.dll"],
     },
     ("linux", "x86_64"): {
         # OBS's Ubuntu .deb installs under /usr/local/ (CMake's default
-        # CMAKE_INSTALL_PREFIX), not /usr/. Layout:
-        #   usr/local/lib/x86_64-linux-gnu/libobs.so.0
-        #   usr/local/lib/x86_64-linux-gnu/obs-plugins/*.so
-        #   usr/local/share/obs/libobs/*.effect        (shader effects)
-        #   usr/local/share/obs/obs-plugins/*/         (plugin data)
-        # Recent releases ship several Ubuntu builds (24.04, 26.04, …). Pin the
-        # 24.04 LTS deb: it links the oldest glibc of the set, so the bundled
-        # binaries run on the widest range of distros.
-        "asset_re": r"OBS-Studio-[\d.]+-Ubuntu-24\.04-x86_64\.deb$",
+        # CMAKE_INSTALL_PREFIX), not /usr/. Layout since OBS 33:
+        #   usr/local/lib/x86_64-linux-gnu/libobs.so.30
+        #   usr/local/lib/x86_64-linux-gnu/obs-modules/core/*.so
+        #   usr/local/share/obs/libobs/*.effect              (shader effects)
+        #   usr/local/share/obs/obs-modules/core/<module>/   (plugin data)
+        # OBS 33 ships an Ubuntu 26.04 deb only (32.x also had 24.04), so the
+        # bundle needs glibc >= 2.43 and the 26.04 sonames (FFmpeg 8, x264 165,
+        # mbedtls 3); the release workflow tags the wheel accordingly.
+        "asset_re": r"OBS-Studio-[\d.]+-Ubuntu-26\.04-x86_64\.deb$",
         "kind": "deb",
         "extract": {
             "usr/local/lib/x86_64-linux-gnu/":  "",
             "usr/local/share/obs/":             "data/",
         },
-        "verify_file": "libobs.so.0",
+        "verify_file": ["libobs.so.30", "obs-modules/core/obs-ffmpeg.so"],
     },
     ("macos", "x86_64"): {
         "asset_re": r"OBS-Studio-[\d.]+-macOS-Intel\.dmg$",
         "kind": "dmg",
-        "verify_file": "Frameworks/libobs.framework/Versions/A/libobs",
+        "verify_file": ["Frameworks/libobs.framework/Versions/A/libobs",
+                        "obs-plugins/image-source.dylib"],
     },
     ("macos", "arm64"): {
         "asset_re": r"OBS-Studio-[\d.]+-macOS-Apple\.dmg$",
         "kind": "dmg",
-        "verify_file": "Frameworks/libobs.framework/Versions/A/libobs",
+        "verify_file": ["Frameworks/libobs.framework/Versions/A/libobs",
+                        "obs-plugins/image-source.dylib"],
     },
 }
 
@@ -461,10 +465,13 @@ def fetch_for(plat: str, arch: str, release: dict, cache: Path) -> bool:
     if removed:
         print(f"    -{removed['files']} files / -{removed['mb']:.1f} MB trimmed")
 
-    verify = cfg.get("verify_file")
-    if verify and not (dst / verify).exists():
-        print(f"  [!] expected {verify} missing after extraction")
-        return False
+    # Check libobs AND a plugin: a bundle without modules used to verify fine
+    # and then load nothing.
+    verify = cfg.get("verify_file") or []
+    for rel in [verify] if isinstance(verify, str) else verify:
+        if not (dst / rel).exists():
+            print(f"  [!] expected {rel} missing after extraction")
+            return False
 
     manifest_path = dst / "runtime.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.is_file() else {}
@@ -485,7 +492,8 @@ def fetch_for(plat: str, arch: str, release: dict, cache: Path) -> bool:
 #
 # What we KEEP:
 #   • libobs + its direct system deps (ffmpeg, x264, libpulse, etc.)
-#   • obs-plugins for capture, encoding, output, filters, transitions
+#   • plugins (obs-modules/core since OBS 33) for capture, encoding, output,
+#     filters, transitions
 #     (the ones a Python-driven recording/streaming app actually needs)
 #   • data/ files those plugins read at runtime (shaders, presets)
 #
@@ -534,10 +542,13 @@ _TRIM_GLOBS = [
     "**/snapshot_blob*", "**/v8_*",
     "**/icudtl.dat", "**/resources.pak", "**/chrome_*.pak",
     "**/Resources/locales",
+    "**/locales",            # CEF's (Linux/Windows); module data uses locale/
     # obs-vst (VST host — niche)
     "**/obs-vst*",
     # DeckLink (Blackmagic capture — requires their SDK driver)
     "**/decklink*",
+    # AJA output UI is a Qt frontend dock (the AJA capture plugin is kept)
+    "**/aja-output-ui*",
     # NVIDIA Video Effects (needs separate NVIDIA SDK install)
     "**/nv-filters*",
     # Dev artefacts
@@ -556,6 +567,7 @@ _TRIM_GLOBS = [
     # pylibobs's "Python wrapping libobs"; not needed)
     "**/obs-scripting*",
     "**/libobs-scripting*",
+    "**/_obspython*", "**/obslua*",     # the scripting modules in macOS PlugIns/
     # OBS Studio GUI artifacts (icons, .desktop, man pages, AppStream)
     "**/applications",
     "**/icons",
