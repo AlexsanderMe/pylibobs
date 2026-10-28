@@ -3,7 +3,7 @@ C declarations for libobs, formatted for cffi cdef().
 
 Extracted and cleaned from OBS Studio public headers (libobs/obs.h and related).
 Preprocessor macros are replaced with inline values; only cffi-compatible syntax is used.
-Targets OBS Studio 30.x API.
+Targets OBS Studio 33.x API.
 """
 
 # ---------------------------------------------------------------------------
@@ -285,8 +285,41 @@ _CORE = """
     bool               obs_video_active(void);
 
     void obs_add_module_path(const char *bin, const char *data);
+    /* Enumerates the modules under paths given to obs_add_module_path without
+       loading them; load_modules() opens each one itself, since libobs 33 no
+       longer loads those paths. Handles per-module directories and %module%. */
+    struct obs_module_info {
+        const char *bin_path;
+        const char *data_path;
+    };
+    typedef void (*obs_find_module_callback_t)(void *param, const struct obs_module_info *info);
+    void obs_find_modules(obs_find_module_callback_t callback, void *param);
+    /* A no-op since OBS 33 (deprecated; removal planned for 34). pylibobs
+       loads modules one by one with obs_open_module / obs_init_module. */
     void obs_load_all_modules(void);
     void obs_post_load_modules(void);
+    /* obs_module_t * — declared void * because obs_module_t is only typedefd
+       later, by the generated PREAMBLE; callers only compare it with NULL. */
+    void *obs_get_module(const char *name);
+
+    /* OBS 33 module system. obs_load_plugins loads every module under
+       info->path_info.binary; a LEGACY_PLUGIN type skips names on libobs's
+       core-module list, so PLUGIN is the type to use for embedders. */
+    enum obs_runtime_module_type {
+        OBS_MODULE_TYPE_UNDEFINED,
+        OBS_MODULE_TYPE_CORE,
+        OBS_MODULE_TYPE_PLUGIN,
+        OBS_MODULE_TYPE_LEGACY_PLUGIN
+    };
+    struct obs_runtime_module_path { const char *binary; const char *data; };
+    struct obs_runtime_module_info {
+        struct obs_runtime_module_path path_info;
+        enum obs_runtime_module_type type;
+        const char *name;
+    };
+    struct obs_module_failure_info { char **failed_modules; size_t count; };
+    void obs_load_plugins(struct obs_runtime_module_info *info, struct obs_module_failure_info *error);
+    void obs_module_failure_info_free(struct obs_module_failure_info *mfi);
 
     void obs_add_data_path(const char *path);
     bool obs_remove_data_path(const char *path);
@@ -461,10 +494,13 @@ _SOURCE = """
     // when ffmpeg_source produced audio packets but the speakers
     // stayed silent.
     //
-    // ``obs_monitoring_type`` enum values:
-    //   0 = OBS_MONITORING_TYPE_NONE              (default — silent)
-    //   1 = OBS_MONITORING_TYPE_MONITOR_ONLY       (heard, not recorded)
-    //   2 = OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT (heard AND recorded)
+    // OBS 33 made monitoring a switch: enabled = heard AND kept in the output
+    // (mute the source to keep it out of recordings/streams).
+    void obs_source_set_monitoring_enabled(obs_source_t *source, bool enabled);
+    bool obs_source_get_monitoring_enabled(const obs_source_t *source);
+    // Deprecated in 33 (removal planned for 34). ``obs_monitoring_type``:
+    //   0 = NONE, 1 = MONITOR_ONLY, 2 = MONITOR_AND_OUTPUT. libobs 33 maps any
+    //   non-zero value to "enabled", so MONITOR_ONLY now also reaches outputs.
     void obs_source_set_monitoring_type(obs_source_t *source, int type);
     int  obs_source_get_monitoring_type(const obs_source_t *source);
 
@@ -819,7 +855,7 @@ _ENUMERATE = """
     /* obs_output_defaults declared by AUTO_DECLS */
 
     /* Audio monitoring — note: obs_set/get_audio_monitoring_device and
-       obs_source_set/get_monitoring_type are declared in the SOURCE block. */
+       obs_source_set/get_monitoring_enabled are declared in the SOURCE block. */
     void obs_enum_audio_monitoring_devices(obs_enum_audio_devices_cb_t cb,
                                            void *data);
     bool obs_audio_monitoring_available(void);
@@ -1385,6 +1421,38 @@ _FRAME_SOURCE = """
 """
 
 
+# OBS 33 replaced the gs_image_file / 2 / 3 / 4 families with gs_image_file_ex.
+# It is a value struct libobs fills in (callers allocate it), so its layout is
+# spelled out — 72 bytes on 64-bit, pinned by tests/unit/test_struct_layout.py.
+# The two enums are passed as int: gs_image_alpha_mode (0 = straight,
+# 1 = premultiply-at-load (srgb), 2 = premultiply-at-load (linear)) and
+# gs_color_space.
+_IMAGE_FILE = """
+    typedef struct gs_image_file_ex {
+        gs_texture_t *texture;
+        enum gs_color_format format;
+        uint32_t cx;
+        uint32_t cy;
+        bool is_animated_gif;
+        bool frame_updated;
+        bool loaded;
+        void *internal;
+        uint64_t cur_time;
+        int cur_frame;
+        int cur_loop;
+        uint8_t *texture_data;
+        uint64_t mem_usage;
+        int alpha_mode;
+        int space;
+    } gs_image_file_ex_t;
+
+    void gs_image_file_ex_init(gs_image_file_ex_t *image, const char *file, int alpha_mode);
+    void gs_image_file_ex_free(gs_image_file_ex_t *image);
+    void gs_image_file_ex_init_texture(gs_image_file_ex_t *image);
+    bool gs_image_file_ex_tick(gs_image_file_ex_t *image, uint64_t elapsed_time_ns);
+    void gs_image_file_ex_update_texture(gs_image_file_ex_t *image);
+"""
+
 ALL_DECLS = "\n".join([_COMMON, _ENUMS, _STRUCTS, _CORE, _DATA, _SOURCE, _SCENE,
                        _ENCODER, _SERVICE, _OUTPUT, _SIGNALS,
                        _FILTERS, _TRANSITIONS, _HOTKEYS, _VOLMETER, _FADER,
@@ -1392,6 +1460,7 @@ ALL_DECLS = "\n".join([_COMMON, _ENUMS, _STRUCTS, _CORE, _DATA, _SOURCE, _SCENE,
                        _RAW_CALLBACKS, _SCENEITEM_TRANSFORM, _DATA_FULL,
                        _PROPERTY_ACCESSORS, _SOURCE_EXTRAS, _OUTPUT_EXTRAS,
                        _ENCODER_ROI, _SOURCE_ENUM, _VIDEO_EXTRAS, _FILTER_COPY,
+                       _IMAGE_FILE,  # before AUTO_DECLS, which may name gs_image_file_ex_t
                        PREAMBLE,    # Opaque typedefs for auto-extracted decls
                        AUTO_DECLS,
                        STUB_DECLS,

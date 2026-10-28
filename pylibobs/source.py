@@ -183,6 +183,34 @@ class Source:
         get_lib().obs_source_set_audio_mixers(self._ptr, int(bitfield))
 
     # ------------------------------------------------------------------
+    # Audio monitoring
+    # ------------------------------------------------------------------
+    @property
+    def monitoring_enabled(self) -> bool:
+        """Whether this source's audio is played on the monitoring device.
+
+        Since OBS 33 monitoring is a switch: an enabled source is heard AND
+        stays in the output mix (recordings, streams). The 32.x "monitor only"
+        mode is :meth:`set_monitor_only`.
+        """
+        return bool(get_lib().obs_source_get_monitoring_enabled(self._ptr))
+
+    @monitoring_enabled.setter
+    def monitoring_enabled(self, enabled: bool) -> None:
+        get_lib().obs_source_set_monitoring_enabled(self._ptr, bool(enabled))
+
+    def set_monitor_only(self, enabled: bool = True) -> None:
+        """Hear the source on the monitoring device but keep it out of outputs.
+
+        Turns monitoring on and mutes the source: muting removes it from the
+        output mix while every monitoring backend keeps playing it. This is what
+        OBS_MONITORING_TYPE_MONITOR_ONLY did before OBS 33. ``enabled=False``
+        turns monitoring off and unmutes.
+        """
+        self.monitoring_enabled = enabled
+        self.muted = enabled
+
+    # ------------------------------------------------------------------
     # Deinterlace
     # ------------------------------------------------------------------
     @property
