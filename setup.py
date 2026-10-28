@@ -9,7 +9,7 @@ reasons that need imperative Python code:
    binaries differ per OS / architecture. Overriding
    `Distribution.has_ext_modules()` to return True makes setuptools
    tag the wheel with the host's platform string (e.g. `win_amd64`,
-   `manylinux_2_31_x86_64`, `macosx_11_0_arm64`).
+   `linux_x86_64`, retagged `manylinux_2_43_x86_64` by CI, `macosx_11_0_arm64`).
 
 2. **Python-version-agnostic tag.** The Python code itself is pure
    Python (no compiled C extension specific to one CPython ABI), so
@@ -18,10 +18,13 @@ reasons that need imperative Python code:
    does this.
 
 Together these produce wheels like:
-    pylibobs-0.1.0-py3-none-win_amd64.whl
-    pylibobs-0.1.0-py3-none-manylinux_2_31_x86_64.whl
-    pylibobs-0.1.0-py3-none-macosx_11_0_arm64.whl
+    pylibobs-33.0.0-py3-none-win_amd64.whl
+    pylibobs-33.0.0-py3-none-manylinux_2_43_x86_64.whl
+    pylibobs-33.0.0-py3-none-macosx_11_0_arm64.whl
 """
+import os
+from pathlib import Path
+
 from setuptools import setup
 from setuptools.dist import Distribution
 
@@ -39,8 +42,36 @@ class BinaryDistribution(Distribution):
         return False
 
 
+#: Set to 1 to build a wheel with no bundled libobs, for use with a system OBS.
+ALLOW_SYSTEM_LIBOBS = "PYLIBOBS_ALLOW_SYSTEM_LIBOBS"
+_LIBOBS_NAMES = ("libobs.so*", "obs.dll", "libobs.dylib", "Frameworks/libobs.dylib")
+
+
+def _has_bundled_libobs() -> bool:
+    libs = Path(__file__).resolve().parent / "pylibobs" / "_libs"
+    return any(next(libs.glob(f"*/*/{name}"), None) is not None for name in _LIBOBS_NAMES)
+
+
 class BdistWheel(_BdistWheel):
     """Re-tag as `py3-none-<plat>` (pure-Python code + platform-specific data)."""
+    def run(self):
+        # pip builds a wheel like this when it installs the sdist, which it
+        # does whenever no published wheel fits the system — e.g. Linux with
+        # glibc < 2.43 for pylibobs 33. The sdist carries no libobs, and a
+        # pylibobs without one would silently bind whatever libobs the system
+        # has, of whatever version. Fail with a pointer instead.
+        if not _has_bundled_libobs() and os.environ.get(ALLOW_SYSTEM_LIBOBS) != "1":
+            raise SystemExit(
+                "pylibobs: no bundled libobs to put in this wheel.\n"
+                "pip is building pylibobs from source, which happens when no published\n"
+                "wheel fits this system. pylibobs 33's Linux wheel needs glibc 2.43+\n"
+                "(Ubuntu 26.04 or newer); on older systems install the OBS 32 release:\n"
+                "    pip install \"pylibobs<33\"\n"
+                "To build against a system-installed OBS 33 instead, set\n"
+                f"{ALLOW_SYSTEM_LIBOBS}=1. Maintainers: run scripts/fetch_libs.py first."
+            )
+        super().run()
+
     def finalize_options(self):
         super().finalize_options()
         self.root_is_pure = False

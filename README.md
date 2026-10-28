@@ -55,6 +55,10 @@ cannot use the wheel; install the last release for OBS 32 instead:
 pip install "pylibobs<33"
 ```
 
+Without that pin, pip falls back to building pylibobs 33 from source there, and stops with an
+error pointing to this command: the source package carries no libobs. To use pylibobs 33 with a
+system-installed OBS 33 instead, set `PYLIBOBS_ALLOW_SYSTEM_LIBOBS=1` when installing.
+
 If you're installing from sdist (rare — only when no wheel is published for your platform), or
 you want to use a system-installed OBS, the loader falls back through:
 
