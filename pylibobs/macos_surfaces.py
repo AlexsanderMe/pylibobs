@@ -18,7 +18,15 @@ import uuid
 def _native():
     if platform.system() != "Darwin":
         raise OSError("IOSurface delivery requires macOS")
-    library = ctypes.CDLL(str(Path(__file__).parent / "native" / "macos_surfaces.dylib"))
+    path = Path(__file__).parent / "native" / "macos_surfaces.dylib"
+    if not path.is_file():
+        # Source installs skip the helper when clang is unavailable.
+        raise OSError(
+            f"pylibobs's IOSurface helper is missing ({path}). Install a macOS wheel, "
+            "or install the Xcode command line tools (xcode-select --install) "
+            "and reinstall pylibobs from source."
+        )
+    library = ctypes.CDLL(str(path))
     signatures = {
         "pys_presenter_create": ([ctypes.c_void_p, ctypes.c_char_p], ctypes.c_void_p),
         "pys_presenter_poll": ([ctypes.c_void_p], ctypes.c_int),

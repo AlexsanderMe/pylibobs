@@ -237,10 +237,18 @@ Remove owned render callbacks and close the producer before shutting down OBS.
 Replacing a producer changes its dimensions; replacing a presenter gives it a
 fresh endpoint. OpenGL writes and reads finish before buffer handoff/reuse.
 This avoids CPU pixel readback but includes GPU synchronization; software
-renderers can still be slow. Native integration depends on the macOS runtime
-fixes, and macOS wheels compile the Cocoa library during their build.
+renderers can still be slow. The macOS wheel ships the small native helper this
+needs. Source installs compile it with clang and skip it, with a warning, when
+the Xcode command line tools are missing; `macos_surfaces` then raises `OSError`.
 `presenter.last_frame_latency_ms` measures the last frame from render entry to
 GPU presentation completion using the shared monotonic clock; it excludes scanout.
+
+The endpoint is a name in the user's login session, not a private channel: any
+process running as the same user that learns it can connect and show its own
+frames in the view. The presenter checks every message (size, format, rights),
+so such a process can only show wrong pixels, but don't log the endpoint or
+display it, and pass it to the producer over a channel only your processes can
+read, such as a pipe.
 
 Run `examples/macos_surface_smoke.py` to validate two-process pixels, resizing,
 backpressure and timing. It requires PyObjC only for the example's native window.

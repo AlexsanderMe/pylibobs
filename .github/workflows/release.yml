@@ -164,7 +164,21 @@ jobs:
       - name: Build wheel
         # Use build isolation so build downloads the exact setuptools>=68
         # declared in pyproject.toml's [build-system].requires.
+        env:
+          # macOS: the wheel must carry the IOSurface helper.
+          PYLIBOBS_REQUIRE_NATIVE: "1"
         run: python -m build --wheel
+
+      - name: Verify macOS wheel carries the IOSurface helper
+        if: runner.os == 'macOS'
+        run: |
+          python - <<'PY'
+          import glob, sys, zipfile
+          for whl in glob.glob("dist/*.whl"):
+              if "pylibobs/native/macos_surfaces.dylib" not in zipfile.ZipFile(whl).namelist():
+                  sys.exit(f"{whl} lacks pylibobs/native/macos_surfaces.dylib")
+          PY
+        shell: bash
 
       # PyPI rejects Linux wheels tagged `linux_*` — they must be `manylinux_*`.
       # Standard auditwheel-repair doesn't help here (it expects a C extension

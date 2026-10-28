@@ -226,3 +226,13 @@ def test_close_does_not_invert_graphics_lock_against_render_callback(backend):
     producer.close()
     assert not render_thread.is_alive() and not close_thread.is_alive()
     assert not failures, failures
+
+
+def test_missing_helper_explains_how_to_get_it(monkeypatch, tmp_path):
+    monkeypatch.setattr(surfaces.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(surfaces, "__file__", str(tmp_path / "macos_surfaces.py"))
+    load = Mock(side_effect=AssertionError("must not load a missing helper"))
+    monkeypatch.setattr(surfaces.ctypes, "CDLL", load)
+    with pytest.raises(OSError, match="xcode-select --install"):
+        surfaces._native()
+    load.assert_not_called()

@@ -55,6 +55,10 @@ def _has_bundled_libobs() -> bool:
     return any(next(libs.glob(f"*/*/{name}"), None) is not None for name in _LIBOBS_NAMES)
 
 
+#: Set to 1 to fail the build, instead of warning, if the macOS helper won't compile.
+REQUIRE_NATIVE = "PYLIBOBS_REQUIRE_NATIVE"
+
+
 class BuildPy(_BuildPy):
     _native_library = Path("native/macos_surfaces.dylib")
 
@@ -85,13 +89,31 @@ class BuildPy(_BuildPy):
             if self.editable_mode:
                 destination = source
             destination.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.check_call([
-                "clang", "-dynamiclib", "-O2", "-Wall", "-Wextra", "-Werror",
-                "-Wno-deprecated-declarations", "-mmacosx-version-min=13.0",
-                "-framework", "Cocoa", "-framework", "IOSurface", "-framework", "OpenGL",
-                str(source.with_suffix(".m")), "-o", str(destination),
-            ])
-            subprocess.check_call(["codesign", "--force", "--sign", "-", str(destination)])
+            # Only pylibobs.macos_surfaces needs the helper, so by default a
+            # Mac without the Xcode command line tools still installs
+            # pylibobs, minus that module. CI and the release build set
+            # REQUIRE_NATIVE, which also turns warnings into errors there
+            # rather than in users' installs on a newer clang.
+            strict = os.environ.get(REQUIRE_NATIVE) == "1"
+            try:
+                subprocess.check_call([
+                    "clang", "-dynamiclib", "-O2", "-Wall", "-Wextra",
+                    *(["-Werror"] if strict else []),
+                    "-Wno-deprecated-declarations", "-mmacosx-version-min=13.0",
+                    "-framework", "Cocoa", "-framework", "IOSurface", "-framework", "OpenGL",
+                    str(source.with_suffix(".m")), "-o", str(destination),
+                ])
+                subprocess.check_call(["codesign", "--force", "--sign", "-", str(destination)])
+            except (OSError, subprocess.CalledProcessError) as error:
+                if strict:
+                    raise
+                destination.unlink(missing_ok=True)
+                print(
+                    f"warning: pylibobs: could not build {self._native_library} ({error}); "
+                    "pylibobs.macos_surfaces will be unavailable. Install the Xcode "
+                    "command line tools (xcode-select --install) and reinstall to enable it.",
+                    file=sys.stderr,
+                )
 
 
 class BdistWheel(_BdistWheel):

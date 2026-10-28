@@ -19,6 +19,9 @@ jobs:
   unit:
     name: Unit / ${{ matrix.os }} py${{ matrix.python }}
     runs-on: ${{ matrix.os }}
+    env:
+      # On macOS, fail if the IOSurface helper doesn't compile warning-free.
+      PYLIBOBS_REQUIRE_NATIVE: "1"
     strategy:
       fail-fast: false
       matrix:

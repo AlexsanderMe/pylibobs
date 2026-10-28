@@ -2,6 +2,7 @@
 from pathlib import Path
 import runpy
 import shutil
+import sys
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -69,3 +70,37 @@ def test_other_platforms_do_not_build_cocoa_helpers(native_build, monkeypatch, p
     command.run()
     assert not native_build.calls
     assert not list(native_build.package.rglob("*.dylib"))
+
+
+def _missing_clang(arguments):
+    raise FileNotFoundError(2, "No such file or directory", arguments[0])
+
+
+def test_missing_compiler_does_not_fail_an_ordinary_install(native_build, monkeypatch, capsys):
+    monkeypatch.delenv("PYLIBOBS_REQUIRE_NATIVE", raising=False)
+    monkeypatch.setattr("subprocess.check_call", _missing_clang)
+    command = native_build.command
+    # The fixture's stand-in for sys has no stderr; give it pytest's.
+    monkeypatch.setitem(command.run.__globals__, "sys",
+                        SimpleNamespace(platform="darwin", stderr=sys.stderr))
+    command.run()
+    assert not list(Path(native_build.command.build_lib).rglob("*.dylib"))
+    assert "macos_surfaces will be unavailable" in capsys.readouterr().err
+
+
+def test_release_builds_fail_without_the_helper(native_build, monkeypatch):
+    monkeypatch.setenv("PYLIBOBS_REQUIRE_NATIVE", "1")
+    monkeypatch.setattr("subprocess.check_call", _missing_clang)
+    with pytest.raises(FileNotFoundError):
+        native_build.command.run()
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_werror_only_in_required_builds(native_build, monkeypatch, strict):
+    if strict:
+        monkeypatch.setenv("PYLIBOBS_REQUIRE_NATIVE", "1")
+    else:
+        monkeypatch.delenv("PYLIBOBS_REQUIRE_NATIVE", raising=False)
+    native_build.command.run()
+    clang = next(call for call in native_build.calls if call[0] == "clang")
+    assert ("-Werror" in clang) is strict
