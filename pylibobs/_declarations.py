@@ -285,6 +285,15 @@ _CORE = """
     bool               obs_video_active(void);
 
     void obs_add_module_path(const char *bin, const char *data);
+    /* Enumerates the modules under paths given to obs_add_module_path without
+       loading them; load_modules() opens each one itself, since libobs 33 no
+       longer loads those paths. Handles per-module directories and %module%. */
+    struct obs_module_info {
+        const char *bin_path;
+        const char *data_path;
+    };
+    typedef void (*obs_find_module_callback_t)(void *param, const struct obs_module_info *info);
+    void obs_find_modules(obs_find_module_callback_t callback, void *param);
     /* A no-op since OBS 33 (deprecated; removal planned for 34). pylibobs
        loads modules one by one with obs_open_module / obs_init_module. */
     void obs_load_all_modules(void);

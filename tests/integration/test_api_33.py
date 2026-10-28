@@ -125,3 +125,17 @@ def test_gs_image_file_ex_loads_an_image(obs, tmp_path):
         lib.obs_enter_graphics()
         lib.gs_image_file_ex_free(image)
         lib.obs_leave_graphics()
+
+
+def test_add_module_path_loads_modules_on_33():
+    """On 33 a path registered with libobs is no longer loaded by libobs itself;
+    load_modules() must find (obs_find_modules) and open its modules."""
+    from pylibobs._lib import get_obs_module_dirs
+    bin_dir, data_template = get_obs_module_dirs()
+    with OBSContext() as ctx:
+        ctx.set_video(320, 180, fps_num=30)
+        ctx.set_audio()
+        ctx.add_module_path(bin_dir, data_template)
+        ctx.load_modules(auto_detect=False)
+        assert get_lib().obs_get_module(b"obs-ffmpeg") != ffi.NULL, ctx.failed_modules
+        assert "ffmpeg_source" in enum_input_types()

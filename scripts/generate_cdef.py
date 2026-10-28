@@ -116,6 +116,7 @@ ALREADY_TYPES = {
     # typedef here would make callers allocate 8 bytes where libobs writes the
     # whole struct (gs_image_file_ex is 72 bytes). Declared in _declarations.py.
     "gs_image_file_ex_t",
+    "obs_find_module_callback_t",
     "obs_display_draw_callback_t","obs_load_source_cb","obs_hotkey_enum_func",
 }
 ALREADY_STRUCTS = {
@@ -124,6 +125,7 @@ ALREADY_STRUCTS = {
     "obs_transform_info","obs_sceneitem_crop","obs_encoder_roi","encoder_packet",
     "obs_module_failure_info","obs_runtime_module_info","obs_runtime_module_path",
     "gs_image_file_ex",
+    "obs_module_info",
 }
 ALREADY_ENUMS = {
     "obs_video_err","video_format","speaker_layout","obs_scale_type","obs_runtime_module_type",
@@ -141,7 +143,7 @@ def collect_referenced_types(decls):
     for line in decls:
         for m in sre.finditer(line): structs.add(m.group(1))
         for m in ere.finditer(line): enums.add(m.group(1))
-    for hdr in sorted(HEADERS_ROOT.rglob("*.h")):
+    for hdr in public_headers():
         try:
             text = strip_comments(hdr.read_text(encoding="utf-8", errors="replace"))
         except Exception:
@@ -158,6 +160,21 @@ def collect_referenced_types(decls):
 
 PUBLIC_PREFIXES = ("obs_", "gs_", "signal_", "proc_", "calldata_",
                    "audio_output_", "video_output_")
+
+
+#: Third-party code vendored inside libobs/, not part of its API. libnsgif's
+#: function-pointer members (`nsgif_bitmap_t *(*create)(int width, ...)`) fool
+#: the typedef regexes into emitting typedefs named `create`, `lzw_result`,
+#: `nsgif_*`, which can then clash with field names in the cdef. (Approach
+#: taken from the parallel update/libobs-33.0.0 branch.)
+VENDORED_DIRS = ("graphics/libnsgif",)
+
+
+def public_headers():
+    for hdr in sorted(HEADERS_ROOT.rglob("*.h")):
+        rel = hdr.relative_to(HEADERS_ROOT).as_posix()
+        if not rel.startswith(VENDORED_DIRS):
+            yield hdr
 
 
 def curated_names() -> set[str]:
@@ -188,7 +205,7 @@ def main():
     missing = public - have
 
     found = {}
-    for hdr in sorted(HEADERS_ROOT.rglob("*.h")):
+    for hdr in public_headers():
         try: text = hdr.read_text(encoding="utf-8", errors="replace")
         except Exception: continue
         for name, decl in extract_funcs(text):

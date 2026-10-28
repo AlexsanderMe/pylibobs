@@ -22,7 +22,7 @@ from ._ffi import ffi, get_lib, mark_alive, mark_dead, release_all_wrappers
 
 # libobs MAX_CHANNELS is 64 in the public ABI; conservatively clear that many.
 _MAX_OUTPUT_CHANNELS = 64
-from ._lib import _layout_modules, discover_modules, get_obs_data_dir
+from ._lib import QT_FRONTEND_MODULES, discover_modules, get_obs_data_dir
 
 
 class VideoFormat(IntEnum):
@@ -150,7 +150,6 @@ class OBSContext:
         self._locale = locale
         self._module_config_path = module_config_path or _default_config_dir()
         self._started = False
-        self._extra_module_paths: list[tuple[str, str]] = []
         #: ``(name, reason)`` for each module the last load_modules() could not load.
         self.failed_modules: list[tuple[str, str]] = []
 
@@ -332,9 +331,9 @@ class OBSContext:
 
         ``data_path`` may contain ``%module%``. Since OBS 33 registering a path
         with libobs no longer loads anything by itself (``obs_load_all_modules``
-        became a no-op), so pylibobs keeps the list and loads them explicitly.
+        became a no-op), so load_modules() enumerates these paths with libobs's
+        own ``obs_find_modules`` and opens each module.
         """
-        self._extra_module_paths.append((bin_path, data_path))
         get_lib().obs_add_module_path(bin_path.encode(), data_path.encode())
 
     def load_modules(self, auto_detect: bool = True) -> None:
@@ -350,9 +349,17 @@ class OBSContext:
         Modules that fail to load are recorded in :attr:`failed_modules`; a
         warning is issued if none could be loaded at all.
         """
+        lib = get_lib()
         modules = discover_modules() if auto_detect else []
-        for bin_path, data_template in self._extra_module_paths:
-            modules += _layout_modules("flat", Path(bin_path), data_template)
+        if int(lib.obs_get_version()) >> 24 < LIBOBS_MAJOR and not modules:
+            # A pre-33 system libobs with nothing found here: its own scan
+            # still works and knows its install paths.
+            lib.obs_load_all_modules()
+        seen = {name for name, _, _ in modules}
+        for module in _modules_in_added_paths():
+            if module[0] not in seen and module[0] not in QT_FRONTEND_MODULES:
+                seen.add(module[0])
+                modules.append(module)
 
         self.failed_modules = []
         loaded = 0
@@ -362,7 +369,7 @@ class OBSContext:
                 loaded += 1
             else:
                 self.failed_modules.append((name, reason))
-        get_lib().obs_post_load_modules()
+        lib.obs_post_load_modules()
 
         if modules and not loaded:
             warnings.warn(f"no OBS module could be loaded ({len(modules)} found): "
@@ -468,6 +475,22 @@ class OBSContext:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _modules_in_added_paths() -> list[tuple[str, str, str]]:
+    """``(name, bin_path, data_path)`` of every module under the paths given to
+    ``obs_add_module_path``, found by libobs but not loaded."""
+    found: list[tuple[str, str, str]] = []
+
+    @ffi.callback("void(void *, const struct obs_module_info *)")
+    def _cb(_param, info):
+        bin_path = ffi.string(info.bin_path).decode("utf-8", "replace")
+        data_path = ffi.string(info.data_path).decode("utf-8", "replace")
+        name = Path(bin_path).stem
+        found.append((name, bin_path, data_path))
+
+    get_lib().obs_find_modules(_cb, ffi.NULL)
+    return found
+
 
 def _default_config_dir() -> str:
     import os

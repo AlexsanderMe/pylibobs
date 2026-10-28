@@ -69,9 +69,7 @@ PREAMBLE = """
     typedef struct audio_resampler_s *audio_resampler_t;
     typedef struct cf_token_array_s *cf_token_array_t;
     typedef struct config_s *config_t;
-    typedef struct create_s *create;
     typedef struct device_luid_cb_s *device_luid_cb;
-    typedef struct display_s *display;
     typedef struct encoded_callback_s *encoded_callback_t;
     typedef struct ep_param_array_s *ep_param_array_t;
     typedef struct ep_var_array_s *ep_var_array_t;
@@ -98,12 +96,7 @@ PREAMBLE = """
     typedef struct input_s *input_t;
     typedef struct log_handler_s *log_handler_t;
     typedef struct lookup_s *lookup_t;
-    typedef struct lzw_result_s *lzw_result;
     typedef struct media_remux_job_s *media_remux_job_t;
-    typedef struct nsgif_bitmap_fmt_s *nsgif_bitmap_fmt_t;
-    typedef struct nsgif_bitmap_s *nsgif_bitmap_t;
-    typedef struct nsgif_error_s *nsgif_error;
-    typedef struct nsgif_s *nsgif_t;
     typedef struct obs_canvas_s *obs_canvas_t;
     typedef struct obs_destroy_cb_s *obs_destroy_cb;
     typedef struct obs_encoder_group_s *obs_encoder_group_t;
@@ -111,7 +104,6 @@ PREAMBLE = """
     typedef struct obs_enum_module_callback_s *obs_enum_module_callback_t;
     typedef struct obs_fader_conversion_s *obs_fader_conversion_t;
     typedef struct obs_find_module_callback2_s *obs_find_module_callback2_t;
-    typedef struct obs_find_module_callback_s *obs_find_module_callback_t;
     typedef struct obs_hotkey_active_func_s *obs_hotkey_active_func;
     typedef struct obs_hotkey_atomic_update_func_s *obs_hotkey_atomic_update_func;
     typedef struct obs_hotkey_binding_enum_func_s *obs_hotkey_binding_enum_func;
@@ -169,8 +161,6 @@ PREAMBLE = """
     typedef struct tick_avg_s *tick_avg;
     typedef struct util_uint128_s *util_uint128_t;
     typedef struct video_scaler_s *video_scaler_t;
-    typedef struct width_s *width;
-    typedef struct x0_s *x0;
 """
 
 AUTO_DECLS = """
@@ -547,7 +537,6 @@ AUTO_DECLS = """
     void obs_extract_av1_headers(const uint8_t *packet, size_t size, uint8_t **new_packet_data, size_t *new_packet_size, uint8_t **header_data, size_t *header_size);
     void obs_extract_avc_headers(const uint8_t *packet, size_t size, uint8_t **new_packet_data, size_t *new_packet_size, uint8_t **header_data, size_t *header_size, uint8_t **sei_data, size_t *sei_size);
     void obs_extract_hevc_headers(const uint8_t *packet, size_t size, uint8_t **new_packet_data, size_t *new_packet_size, uint8_t **header_data, size_t *header_size, uint8_t **sei_data, size_t *sei_size);
-    void obs_find_modules(obs_find_module_callback_t callback, void *param);
     void obs_find_modules2(obs_find_module_callback2_t callback, void *param);
     double obs_get_active_fps(void);
     bool obs_get_audio_info2(struct obs_audio_info2 *oai2);

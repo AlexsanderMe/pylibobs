@@ -171,17 +171,34 @@ jobs:
       # to rewrite; we ship a pure-Python package with bundled .so's).
       # Instead we directly rename the wheel's platform tag using `wheel tags`.
       # The tag must state the real glibc floor: OBS 33's only Linux build is
-      # for Ubuntu 26.04, and its libobs.so.30 needs GLIBC_2.43 (obs-outputs
-      # 2.42), so pip installs it on glibc 2.43+ systems only. (32.x's tag of
-      # 2.31 understated that bundle's real floor of 2.34.)
+      # for Ubuntu 26.04, and its libobs.so.30 needs GLIBC_2.43, so pip
+      # installs it on glibc 2.43+ systems only. (32.x's hard-coded 2.31
+      # understated that bundle's real floor of 2.34.)
       - name: Re-tag Linux wheel as manylinux
         if: runner.os == 'Linux'
         # `wheel tags --remove` deletes the original wheel and writes the
         # retagged one into the same directory. No move dance needed.
+        # The glibc floor is read from the bundled binaries rather than
+        # hard-coded, so the tag stays truthful when OBS moves its build base.
         run: |
           pip install wheel
+          glibc_minor=$(python - <<'PY'
+          import re
+          from pathlib import Path
+          need = 0
+          for f in Path("pylibobs/_libs/linux").rglob("*"):
+              if f.is_file() and not f.is_symlink():
+                  data = f.read_bytes()
+                  if data[:4] == b"\x7fELF":
+                      need = max([need] + [int(m) for m in re.findall(rb"GLIBC_2\.(\d+)", data)])
+          if not need:
+              raise SystemExit("no GLIBC_2.x symbol versions found in the bundle")
+          print(need)
+          PY
+          )
+          echo "bundled binaries need glibc 2.${glibc_minor}"
           for whl in dist/*-linux_*.whl; do
-            python -m wheel tags --platform-tag manylinux_2_43_x86_64 --remove "$whl"
+            python -m wheel tags --platform-tag "manylinux_2_${glibc_minor}_x86_64" --remove "$whl"
           done
           ls -la dist/
         shell: bash

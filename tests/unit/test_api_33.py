@@ -143,7 +143,9 @@ def test_bundled_obs33_layout_wins_and_qt_modules_are_dropped_from_system(tmp_pa
 def loading_ctx(monkeypatch):
     lib = MagicMock()
     lib.obs_get_module.return_value = None
+    lib.obs_get_version.return_value = 33 << 24
     monkeypatch.setattr("pylibobs.context.get_lib", lambda: lib)
+    monkeypatch.setattr("pylibobs.context._modules_in_added_paths", lambda: [])
     ffi_mod = MagicMock()
     ffi_mod.NULL = None
     monkeypatch.setattr("pylibobs.context.ffi", ffi_mod)
@@ -180,6 +182,30 @@ def test_load_modules_warns_when_no_plugins_exist(loading_ctx):
     monkeypatch.setattr("pylibobs.context.discover_modules", lambda: [])
     with pytest.warns(RuntimeWarning, match="no OBS plugin modules found"):
         ctx.load_modules()
+
+
+def test_modules_under_added_paths_are_loaded_once(loading_ctx):
+    ctx, lib, monkeypatch = loading_ctx
+    monkeypatch.setattr("pylibobs.context.discover_modules", lambda: [("obs-ffmpeg", "/b/obs-ffmpeg.so", "/d")])
+    monkeypatch.setattr("pylibobs.context._modules_in_added_paths", lambda: [
+        ("obs-ffmpeg", "/extra/obs-ffmpeg.so", "/x"),        # already bundled: skipped
+        ("frontend-tools", "/extra/frontend-tools.so", "/x"),  # Qt frontend: never loaded
+        ("my-plugin", "/extra/my-plugin.so", "/x/my-plugin"),
+    ])
+    lib.obs_open_module.return_value = 0
+    lib.obs_init_module.return_value = True
+    ctx.load_modules()
+    opened = [c.args[1] for c in lib.obs_open_module.call_args_list]
+    assert opened == [b"/b/obs-ffmpeg.so", b"/extra/my-plugin.so"]
+
+
+def test_pre_33_libobs_without_found_modules_falls_back_to_its_own_scan(loading_ctx):
+    ctx, lib, monkeypatch = loading_ctx
+    lib.obs_get_version.return_value = (32 << 24) | (2 << 16) | 2
+    monkeypatch.setattr("pylibobs.context.discover_modules", lambda: [])
+    with pytest.warns(RuntimeWarning):
+        ctx.load_modules()
+    lib.obs_load_all_modules.assert_called_once()
 
 
 def test_startup_names_the_monitoring_hotkeys(monkeypatch):
@@ -219,8 +245,10 @@ def test_no_wrapper_uses_apis_deprecated_in_33():
         if py.name.startswith("_declarations"):
             continue
         text = py.read_text()
+        # obs_load_all_modules is allowed only in load_modules' pre-33 fallback
+        allowed = {"context.py": {"obs_load_all_modules"}}.get(py.name, set())
         for name in ("obs_load_all_modules", "obs_source_set_hidden", "obs_source_is_hidden",
                      "obs_source_set_monitoring_type", "obs_source_get_monitoring_type"):
-            if re.search(rf"lib\.{name}\(", text):
+            if name not in allowed and re.search(rf"lib\.{name}\(", text):
                 offenders.append(f"{py.name}: {name}")
     assert not offenders, offenders

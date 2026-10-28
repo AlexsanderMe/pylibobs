@@ -255,7 +255,7 @@ def get_obs_data_dir() -> str | None:
 #: Qt frontend plugins shipped with OBS Studio. They build Qt widgets and abort
 #: the process without a QApplication, which pylibobs never creates, so they
 #: are never loaded from a system install (bundles trim them already).
-_QT_FRONTEND_MODULES = frozenset({
+QT_FRONTEND_MODULES = _QT_FRONTEND_MODULES = frozenset({
     "frontend-tools", "decklink-output-ui", "decklink-captions",
     "aja-output-ui", "obs-websocket",
 })
