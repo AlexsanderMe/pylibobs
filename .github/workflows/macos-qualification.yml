@@ -1,0 +1,190 @@
+name: macOS qualification
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    name: Native wheel / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x86_64
+          - runner: macos-15
+            arch: arm64
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      PYLIBOBS_CHECKOUT: ${{ github.workspace }}
+      TARGET_ARCH: ${{ matrix.arch }}
+      PYLIBOBS_REQUIRE_NATIVE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Prepare isolated qualification environment
+        run: |
+          QUALIFICATION_DIR="$RUNNER_TEMP/pylibobs-qualification"
+          echo "QUALIFICATION_DIR=$QUALIFICATION_DIR" >> "$GITHUB_ENV"
+          mkdir -p "$QUALIFICATION_DIR/logs" "$QUALIFICATION_DIR/wheels"
+          python -m pip install pip==26.1.2 setuptools==80.10.2 wheel==0.46.3 requests==2.32.5
+          python -m venv "$QUALIFICATION_DIR/venv"
+          "$QUALIFICATION_DIR/venv/bin/python" -m pip install pip==26.1.2
+          "$QUALIFICATION_DIR/venv/bin/python" -m pip install setuptools==80.10.2 wheel==0.46.3 pytest==9.0.3 cffi==2.0.0 requests==2.32.5 pyobjc-framework-Cocoa==12.2.2
+
+      - name: Fetch the pinned official OBS runtime
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/check_version.py
+          python scripts/fetch_libs.py --platform macos --arch "$TARGET_ARCH" \
+            --cache-dir "$RUNNER_TEMP/obs-downloads" 2>&1 | tee "$QUALIFICATION_DIR/logs/fetch.log"
+
+      - name: Build native wheel
+        run: |
+          python -m pip wheel --no-build-isolation --no-deps --wheel-dir "$QUALIFICATION_DIR/wheels" . \
+            2>&1 | tee "$QUALIFICATION_DIR/logs/build.log"
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import platform
+          import subprocess
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          output = Path(os.environ["QUALIFICATION_DIR"])
+          wheels = list((output / "wheels").glob("*.whl"))
+          assert len(wheels) == 1, wheels
+          wheel = wheels[0]
+          with zipfile.ZipFile(wheel) as archive:
+              for helper in ("macos_surfaces", "macos_camera"):
+                  assert f"pylibobs/native/{helper}.dylib" in archive.namelist(), helper
+          with wheel.open("rb") as stream:
+              wheel_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+          manifest = Path("pylibobs/_libs/macos") / os.environ["TARGET_ARCH"] / "runtime.json"
+          provenance = {
+              "source_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "wheel": wheel.name,
+              "wheel_sha256": wheel_sha256,
+              "python": sys.version,
+              "platform": platform.platform(),
+              "architecture": platform.machine(),
+              "runtime": json.loads(manifest.read_text()),
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+          }
+          (output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+          PY
+
+      - name: Install wheel outside checkout
+        working-directory: ${{ env.QUALIFICATION_DIR }}
+        run: |
+          "$QUALIFICATION_DIR/venv/bin/python" -m pip install "$QUALIFICATION_DIR"/wheels/*.whl \
+            2>&1 | tee "$QUALIFICATION_DIR/logs/install.log"
+          "$QUALIFICATION_DIR/venv/bin/python" -m pip check
+
+      - name: Run installed binding unit and native contracts
+        working-directory: ${{ env.QUALIFICATION_DIR }}
+        run: |
+          "$QUALIFICATION_DIR/venv/bin/python" - <<'PY' 2>&1 | tee "$QUALIFICATION_DIR/logs/tests.log"
+          import os
+          import sys
+          from pathlib import Path
+
+          import pylibobs
+          import pytest
+
+          # Unit tests select ordinary versus strict build policies explicitly.
+          # Native wheel and editable builds remain strict in their own steps.
+          os.environ.pop("PYLIBOBS_REQUIRE_NATIVE", None)
+
+          checkout = Path(os.environ["PYLIBOBS_CHECKOUT"]).resolve()
+          package = Path(pylibobs.__file__).resolve()
+          assert not package.is_relative_to(checkout), package
+          print(f"Testing installed wheel: {package}", flush=True)
+          # Unit tests also exercise the repository's build scripts. Append
+          # their namespace only after selecting the installed package; native
+          # subprocesses retain the external working directory.
+          sys.path.append(str(checkout))
+          tests = [
+              "tests/unit",
+              "tests/integration/test_api_33.py",
+              "tests/integration/test_runtime_macos.py",
+              "tests/integration/test_display_macos.py",
+              "tests/integration/test_native_scene_api.py",
+              "tests/integration/test_macos_surface_pixels.py",
+              "tests/integration/test_macos_surface_lifecycle.py",
+              "tests/integration/test_macos_camera.py",
+          ]
+          raise SystemExit(pytest.main([
+              *(str(checkout / test) for test in tests),
+              "--import-mode=importlib", "-v", "-ra",
+              f"--junitxml={os.environ['QUALIFICATION_DIR']}/tests.xml",
+          ]))
+          PY
+
+      - name: Qualify editable native helpers
+        working-directory: ${{ env.QUALIFICATION_DIR }}
+        run: |
+          "$QUALIFICATION_DIR/venv/bin/python" -m pip install --no-build-isolation --no-deps -e "$PYLIBOBS_CHECKOUT" \
+            2>&1 | tee "$QUALIFICATION_DIR/logs/editable-build.log"
+          "$QUALIFICATION_DIR/venv/bin/python" - <<'PY' 2>&1 | tee "$QUALIFICATION_DIR/logs/editable-tests.log"
+          import os
+          from pathlib import Path
+          import pylibobs
+          from pylibobs.macos_camera import _native as camera_library
+          from pylibobs.macos_surfaces import _native as surface_library
+          import pytest
+
+          checkout = Path(os.environ["PYLIBOBS_CHECKOUT"]).resolve()
+          assert Path(pylibobs.__file__).resolve().is_relative_to(checkout)
+          camera_library()
+          surface_library()
+          raise SystemExit(pytest.main([
+              str(checkout / "tests/integration/test_macos_surface_pixels.py"),
+              str(checkout / "tests/integration/test_macos_surface_lifecycle.py"),
+              "--import-mode=importlib", "-v", "-ra",
+              f"--junitxml={os.environ['QUALIFICATION_DIR']}/editable-tests.xml",
+          ]))
+          PY
+
+      - name: Describe qualification scope
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          This job builds and tests the installed native wheel without publishing it.
+          It exercises Cocoa display and IOSurface pixel transport, the pinned OBS
+          runtime and resources, optional-helper installation failures and strict
+          native builds, and the CoreMediaIO invalid-device failure path.
+
+          Hosted runners have no configured camera extension or camera hardware.
+          Camera pixel-delivery tests explicitly skip without `PYLIBOBS_TEST_CAMERA_UID`.
+          A green run does not certify physical capture, camera-extension output,
+          user permission dialogs, monitor changes, or accelerated performance.
+          EOF
+
+      - name: Upload qualification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-qualification-${{ matrix.arch }}
+          if-no-files-found: warn
+          path: |
+            ${{ env.QUALIFICATION_DIR }}/logs
+            ${{ env.QUALIFICATION_DIR }}/wheels/*.whl
+            ${{ env.QUALIFICATION_DIR }}/provenance.json
+            ${{ env.QUALIFICATION_DIR }}/*.xml
