@@ -133,12 +133,17 @@ jobs:
               "macos": [
                   # The dmg lays the framework out under Frameworks/, not at the
                   # bundle root.
-                  "Frameworks/libobs.dylib",
+                  "Frameworks/libobs.framework/Versions/A/libobs",
+                  "Frameworks/libobs-opengl.dylib",
+                  "obs-plugins/mac-avcapture.dylib",
+                  "obs-plugins/image-source.dylib",
+                  "obs-plugins/obs-transitions.dylib",
+                  "obs-plugins/obs-ffmpeg.dylib",
+                  "obs-ffmpeg-mux",
+                  "runtime.json",
                   # macOS keeps the shader effects inside the framework bundle
                   # rather than in a data/ tree like Windows and Linux.
                   "Frameworks/libobs.framework/Versions/A/Resources/*.effect",
-                  # Plugins are .plugin bundles (checked against the 33.0.0 dmg).
-                  "PlugIns/obs-ffmpeg.plugin/Contents/MacOS/obs-ffmpeg",
               ],
           }.get(target_os, [])
 

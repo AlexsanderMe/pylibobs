@@ -82,8 +82,20 @@ def test_set_video_calls_obs_reset_video(ctx):
 
 def test_set_video_raises_on_failure(ctx):
     obs, lib, _ = ctx
-    lib.obs_reset_video.return_value = -2   # OBS_VIDEO_INVALID_PARAM
+    lib.obs_reset_video.return_value = -3   # OBS_VIDEO_INVALID_PARAM
     with pytest.raises(RuntimeError, match="obs_reset_video"):
+        obs.set_video()
+
+
+@pytest.mark.parametrize("code,reason", [
+    (-4, "video already active"),
+    (-5, "graphics module not found"),
+    (-2, "not supported"),
+])
+def test_video_reset_preserves_native_failure_reason(ctx, code, reason):
+    obs, lib, _ = ctx
+    lib.obs_reset_video.return_value = code
+    with pytest.raises(RuntimeError, match=reason):
         obs.set_video()
 
 

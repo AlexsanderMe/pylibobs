@@ -70,3 +70,23 @@ def test_generator_counts_only_real_declarations():
     phantom = sorted(name for name in generate_cdef.curated_names()
                      if not re.search(rf"^[^\n/]*\b{name}\s*\([^;]*\);", curated, re.M))
     assert not phantom, f"counted as declared but only mentioned: {phantom}"
+
+
+def test_async_frame_getter_has_its_pointer_return_signature():
+    signature = _declared_signature("obs_source_get_frame")
+    assert signature is not None
+    assert "struct obs_source_frame *" in signature
+    assert "obs_source_t *source" in signature
+    assert "obs_source_get_frame" not in _declarations_auto.STUB_DECLS
+
+
+def test_atomic_scene_update_accepts_a_typed_callback():
+    from pylibobs._ffi import ffi
+    received = []
+
+    @ffi.callback("obs_scene_atomic_update_func")
+    def update(data, scene):
+        received.append((int(ffi.cast("uintptr_t", data)), scene == ffi.NULL))
+
+    update(ffi.cast("void *", 42), ffi.NULL)
+    assert received == [(42, True)]

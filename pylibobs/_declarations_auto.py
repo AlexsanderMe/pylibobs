@@ -14,7 +14,6 @@ PREAMBLE = """
     struct gs_vb_data;
     struct matrix3;
     struct matrix4;
-    struct media_frames_per_second;
     struct obs_audio_info2;
     struct obs_cmdline_args;
     struct obs_encoder_info;
@@ -58,7 +57,6 @@ PREAMBLE = """
     typedef int obs_obj_type_enum_stub; /* enum obs_obj_type */
     typedef int obs_order_movement_enum_stub; /* enum obs_order_movement */
     typedef int obs_source_type_enum_stub; /* enum obs_source_type */
-    typedef int obs_task_type_enum_stub; /* enum obs_task_type */
     typedef int obs_text_info_type_enum_stub; /* enum obs_text_info_type */
     typedef int obs_transition_scale_type_enum_stub; /* enum obs_transition_scale_type */
     typedef int obs_transition_target_enum_stub; /* enum obs_transition_target */
@@ -123,11 +121,8 @@ PREAMBLE = """
     typedef struct obs_property_modified2_s *obs_property_modified2_t;
     typedef struct obs_property_modified_s *obs_property_modified_t;
     typedef struct obs_save_source_filter_cb_s *obs_save_source_filter_cb;
-    typedef struct obs_scene_atomic_update_func_s *obs_scene_atomic_update_func;
     typedef struct obs_source_caption_s *obs_source_caption_t;
     typedef struct obs_source_info_array_s *obs_source_info_array_t;
-    typedef struct obs_task_handler_s *obs_task_handler_t;
-    typedef struct obs_task_s *obs_task_t;
     typedef struct obs_transition_audio_mix_callback_s *obs_transition_audio_mix_callback_t;
     typedef struct obs_transition_video_render_callback_s *obs_transition_video_render_callback_t;
     typedef struct obs_view_s *obs_view_t;
@@ -1094,7 +1089,6 @@ STUB_DECLS = """
     void obs_service_properties(void);
     void obs_source_duplicate(void);
     void obs_source_get_canvas(void);
-    void obs_source_get_frame(void);
     void obs_source_get_missing_files(void);
     void obs_source_get_module(void);
     void obs_source_get_proc_handler(void);

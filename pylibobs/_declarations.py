@@ -31,6 +31,15 @@ _COMMON = """
     typedef struct proc_handler  proc_handler_t;
     typedef struct obs_display   obs_display_t;
 
+    typedef void (*obs_scene_atomic_update_func)(void *data, obs_scene_t *scene);
+    typedef void (*obs_task_t)(void *param);
+    typedef void (*obs_task_handler_t)(obs_task_t task, void *param, bool wait);
+
+    struct media_frames_per_second {
+        uint32_t numerator;
+        uint32_t denominator;
+    };
+
     /* calldata for signal callbacks */
     typedef struct calldata {
         uint8_t *stack;
@@ -74,13 +83,17 @@ _COMMON = """
 # Enums
 # ---------------------------------------------------------------------------
 _ENUMS = """
+    enum obs_task_type {
+        OBS_TASK_UI, OBS_TASK_GRAPHICS, OBS_TASK_AUDIO, OBS_TASK_DESTROY
+    };
+
     enum obs_video_err {
         OBS_VIDEO_SUCCESS         =  0,
-        OBS_VIDEO_NOT_SUPPORTED   = -1,
-        OBS_VIDEO_INVALID_PARAM   = -2,
-        OBS_VIDEO_CURRENTLY_ACTIVE= -3,
-        OBS_VIDEO_MODULE_NOT_FOUND= -4,
-        OBS_VIDEO_FAIL            = -5
+        OBS_VIDEO_FAIL            = -1,
+        OBS_VIDEO_NOT_SUPPORTED   = -2,
+        OBS_VIDEO_INVALID_PARAM   = -3,
+        OBS_VIDEO_CURRENTLY_ACTIVE= -4,
+        OBS_VIDEO_MODULE_NOT_FOUND= -5
     };
 
     enum video_format {
@@ -451,6 +464,7 @@ _DATA = """
 # obs_source_t
 # ---------------------------------------------------------------------------
 _SOURCE = """
+    struct obs_source_frame *obs_source_get_frame(obs_source_t *source);
     obs_source_t *obs_source_create(const char *id, const char *name,
                                     obs_data_t *settings,
                                     obs_data_t *hotkey_data);

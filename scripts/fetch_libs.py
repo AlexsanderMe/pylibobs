@@ -23,7 +23,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
+import os
 import platform
+import plistlib
 import re
 import shutil
 import subprocess
@@ -42,9 +45,9 @@ GITHUB_API = f"https://api.github.com/repos/{REPO}/releases"
 
 #: The OBS release every bundled binary is fetched from, pinned so the shipped
 #: ABI is reproducible. libobs refuses to load a plugin whose `obs_module_ver`
-#: disagrees with `obs_get_version`, so any custom module (solin-framesrc, a
-#: branded virtual-camera filter) must be built against THIS tag's headers and
-#: import lib. Tracking "latest" instead silently moves that target mid-build.
+#: disagrees with `obs_get_version`, so custom modules must be built against
+#: THIS tag's headers and import lib. Tracking "latest" instead silently moves
+#: that target mid-build.
 DEFAULT_OBS_TAG = "33.0.0"
 LIBS_DIR   = Path(__file__).parent.parent / "pylibobs" / "_libs"
 
@@ -99,12 +102,14 @@ ASSET_PATTERNS: dict[tuple[str, str], dict] = {
     ("macos", "x86_64"): {
         "asset_re": r"OBS-Studio-[\d.]+-macOS-Intel\.dmg$",
         "kind": "dmg",
-        "verify_file": "Frameworks/libobs.dylib",
+        "verify_file": ["Frameworks/libobs.framework/Versions/A/libobs",
+                        "obs-plugins/image-source.dylib"],
     },
     ("macos", "arm64"): {
         "asset_re": r"OBS-Studio-[\d.]+-macOS-Apple\.dmg$",
         "kind": "dmg",
-        "verify_file": "Frameworks/libobs.dylib",
+        "verify_file": ["Frameworks/libobs.framework/Versions/A/libobs",
+                        "obs-plugins/image-source.dylib"],
     },
 }
 
@@ -121,7 +126,6 @@ def get_release(version: str | None = None) -> dict:
         print("Fetching latest OBS release...")
     headers = {"Accept": "application/vnd.github+json"}
     # Optional auth — works around GitHub's anonymous 60-req/hr limit on CI
-    import os
     if os.environ.get("GITHUB_TOKEN"):
         headers["Authorization"] = f"Bearer {os.environ['GITHUB_TOKEN']}"
     r = requests.get(url, timeout=30, headers=headers)
@@ -137,24 +141,26 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def download(url: str, dest: Path) -> None:
-    if dest.exists() and dest.stat().st_size > 0:
-        print(f"  cached: {dest.name}")
+def download(url: str, dest: Path, sha256: str) -> None:
+    """Download atomically, validating both new and cached official assets."""
+    if not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        raise ValueError("Expected an official SHA256 asset digest")
+    if dest.exists() and _sha256(dest) == sha256:
+        print(f"  cached (SHA256 verified): {dest.name}")
         return
     print(f"  downloading {url} ...")
-    with requests.get(url, stream=True, timeout=300) as r:
-        r.raise_for_status()
-        total = int(r.headers.get("content-length", 0))
-        done  = 0
-        with open(dest, "wb") as f:
-            for chunk in r.iter_content(1 << 16):
-                f.write(chunk)
-                done += len(chunk)
-                if total:
-                    pct = done * 100 // total
-                    sys.stdout.write(f"\r  {pct:3d}%")
-                    sys.stdout.flush()
-    print()
+    temporary = dest.with_suffix(dest.suffix + ".part")
+    try:
+        with requests.get(url, stream=True, timeout=300) as response:
+            response.raise_for_status()
+            with temporary.open("wb") as stream:
+                for chunk in response.iter_content(1 << 16):
+                    stream.write(chunk)
+        if _sha256(temporary) != sha256:
+            raise RuntimeError(f"SHA256 mismatch for {dest.name}")
+        temporary.replace(dest)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 # ==========================================================================
@@ -274,95 +280,131 @@ def _extract_deb_tree_python(deb_path: Path, src_prefix: str, dst: Path) -> int:
     return n
 
 
-def _extract_dmg(dmg_path: Path, dst_root: Path) -> int:
-    """Mount the DMG with `hdiutil`, copy the .app's Frameworks + Resources
-    over, then unmount. macOS-only.
+def _copy_macos_runtime(contents: Path, destination: Path) -> None:
+    """Keep framework identity/resources, exposing headless modules separately."""
+    with (contents / "Info.plist").open("rb") as stream:
+        minimum_macos = plistlib.load(stream)["LSMinimumSystemVersion"]
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / "runtime.json").write_text(
+        json.dumps({"macos_deployment_target": minimum_macos}) + "\n", encoding="utf-8",
+    )
+    shutil.copytree(
+        contents / "Frameworks", destination / "Frameworks", symlinks=True,
+        ignore=shutil.ignore_patterns(
+            "*.dSYM", "Qt*.framework", "Chromium Embedded Framework.framework",
+            "Sparkle.framework", "Syphon.framework", "OBS Helper*.app",
+            "obs-scripting.dylib", "*obs-frontend-api*",
+        ),
+    )
+    framework = destination / "Frameworks/libobs.framework/Versions/A"
+    if not (framework / "libobs").is_file():
+        raise RuntimeError("Official OBS runtime is missing libobs.framework")
+    application_data = contents / "Resources/data"
+    if application_data.is_dir():
+        shutil.copytree(application_data, destination / "data", symlinks=True)
+    shutil.copytree(framework / "Resources", destination / "data/libobs", dirs_exist_ok=True)
+    shutil.copy2(contents / "MacOS/obs-ffmpeg-mux", destination / "obs-ffmpeg-mux")
+    plugins = destination / "obs-plugins"
+    plugins.mkdir()
+    excluded = {"obs-browser", "obs-websocket", "obs-vst", "mac-syphon",
+                "aja-output-ui", "mac-virtualcam"}
+    for bundle in sorted((contents / "PlugIns").glob("*.plugin")):
+        name = bundle.stem
+        if name in excluded or name.startswith(("decklink", "frontend-")):
+            continue
+        binary = bundle / "Contents/MacOS" / name
+        if not binary.is_file():
+            raise RuntimeError(f"Missing native plugin executable: {bundle.name}")
+        shutil.copy2(binary, plugins / f"{name}.dylib")
+        resources = bundle / "Contents/Resources"
+        if resources.is_dir():
+            shutil.copytree(resources, destination / "data/obs-plugins" / name, symlinks=True)
 
-    OBS on macOS packages libobs as a .framework bundle (Mach-O convention),
-    not a flat .dylib. After extraction we surface the binary at
-    `Frameworks/libobs.dylib` (a copy/symlink) so the rest of the build —
-    including the wheel's verify check — finds it without knowing about
-    framework internals.
-    """
-    if sys.platform != "darwin":
-        print("  [!] DMG extraction requires macOS (uses hdiutil). Skipping.")
-        return 0
 
-    with tempfile.TemporaryDirectory() as tmp:
-        mount_pt = Path(tmp) / "mnt"
-        mount_pt.mkdir()
-        subprocess.check_call(
-            ["hdiutil", "attach", str(dmg_path), "-mountpoint", str(mount_pt),
-             "-nobrowse", "-quiet"],
+_MACHO_MAGICS = {b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
+                 b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
+                 b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca"}
+
+
+def _relocate_macos_runtime(root: Path, architecture: str) -> None:
+    """Resolve the complete private Mach-O dependency graph outside OBS.app."""
+    frameworks = root / "Frameworks"
+    libobs = frameworks / "libobs.framework/Versions/A/libobs"
+    for binary in sorted(root.rglob("*")):
+        if not binary.is_file() or binary.is_symlink():
+            continue
+        with binary.open("rb") as stream:
+            if stream.read(4) not in _MACHO_MAGICS:
+                continue
+        archs = subprocess.check_output(["lipo", "-archs", str(binary)], text=True).split()
+        if architecture not in archs:
+            raise RuntimeError(f"Missing {architecture} slice in {binary}")
+        dependencies = subprocess.check_output(
+            ["otool", "-arch", architecture, "-L", str(binary)], text=True,
         )
+        for line in dependencies.splitlines()[1:]:
+            dependency = line.strip().split(" (compatibility version", 1)[0]
+            if dependency.startswith(("/usr/lib/", "/System/Library/")):
+                continue
+            if "libobs.framework/" in dependency or dependency == "@rpath/libobs.dylib":
+                target = libobs
+            elif dependency.startswith("@rpath/"):
+                target = frameworks / dependency[len("@rpath/"):]
+            elif dependency.startswith("@loader_path/"):
+                target = binary.parent / dependency[len("@loader_path/"):]
+            else:
+                target = frameworks / dependency.split("Frameworks/", 1)[-1]
+            if not target.is_file():
+                raise RuntimeError(f"Unbundled native dependency {dependency} required by {binary}")
+            if target.resolve() == binary.resolve():
+                continue  # dylib's LC_ID_DYLIB, not a dependency
+            relative = os.path.relpath(target, binary.parent).replace(os.sep, "/")
+            relocated = f"@loader_path/{relative}"
+            if relocated != dependency:
+                subprocess.check_call(["install_name_tool", "-change", dependency, relocated, str(binary)])
+        # The graphics backend is opened by name inside libobs, rather than
+        # recorded as LC_LOAD_DYLIB. Let that dlopen resolve beside the framework.
+        relative = os.path.relpath(frameworks, binary.parent).replace(os.sep, "/")
+        rpath = "@loader_path" if relative == "." else f"@loader_path/{relative}"
+        load_commands = subprocess.check_output(
+            ["otool", "-arch", architecture, "-l", str(binary)], text=True,
+        )
+        rpaths = re.findall(r"^\s*path (.+) \(offset \d+\)$", load_commands, re.MULTILINE)
+        if rpath not in rpaths:
+            # The original host's Frameworks path is no longer meaningful in a
+            # Python wheel. Reuse its load command: official arm64 binaries may
+            # have no header padding for an additional LC_RPATH.
+            host_rpath = next((path for path in rpaths
+                               if path.startswith("@executable_path/")), None)
+            if host_rpath is not None:
+                subprocess.check_call([
+                    "install_name_tool", "-rpath", host_rpath, rpath, str(binary),
+                ])
+            else:
+                subprocess.check_call(["install_name_tool", "-add_rpath", rpath, str(binary)])
+        # Relocation invalidates the upstream signature; sign the final bytes.
+        subprocess.check_call(["codesign", "--force", "--sign", "-", str(binary)])
+
+
+def _extract_dmg(dmg_path: Path, dst_root: Path, architecture: str) -> int:
+    """Extract a relocatable headless runtime without flattening its framework."""
+    if sys.platform != "darwin":
+        raise RuntimeError("DMG extraction requires macOS (hdiutil, otool, codesign)")
+    with tempfile.TemporaryDirectory() as temporary:
+        mount = Path(temporary) / "mnt"
+        mount.mkdir()
+        subprocess.check_call(["hdiutil", "attach", str(dmg_path), "-mountpoint", str(mount),
+                               "-readonly", "-nobrowse", "-quiet"])
         try:
-            # OBS's .dmg sometimes contains "OBS.app", sometimes "OBS Studio.app".
-            apps = list(mount_pt.glob("*.app"))
-            if not apps:
-                # Diagnostic: dump the mount contents so the failure is obvious
-                print("  [!] No .app bundle found in DMG. Mount contents:")
-                for p in mount_pt.iterdir():
-                    print(f"      {p.name}")
-                raise RuntimeError("No .app bundle inside DMG")
-            app = apps[0]
-            print(f"    found app: {app.name}")
-            contents = app / "Contents"
-
-            if (contents / "Frameworks").exists():
-                shutil.copytree(contents / "Frameworks",
-                                dst_root / "Frameworks",
-                                dirs_exist_ok=True, symlinks=True)
-            if (contents / "Resources").exists():
-                shutil.copytree(contents / "Resources",
-                                dst_root / "data",
-                                dirs_exist_ok=True, symlinks=True)
-            # Plugins live in PlugIns/<module>.plugin bundles.
-            if (contents / "PlugIns").exists():
-                shutil.copytree(contents / "PlugIns",
-                                dst_root / "PlugIns",
-                                dirs_exist_ok=True, symlinks=True)
-
-            # Locate the libobs binary wherever the .app put it. Common
-            # layouts:
-            #   Frameworks/libobs.dylib                            (flat)
-            #   Frameworks/libobs.0.dylib                          (versioned)
-            #   Frameworks/libobs.framework/Versions/A/libobs       (framework)
-            #   Frameworks/libobs.framework/libobs                  (legacy)
-            frameworks_dir = dst_root / "Frameworks"
-            real_libobs = None
-            for cand in [
-                frameworks_dir / "libobs.dylib",
-                frameworks_dir / "libobs.0.dylib",
-                frameworks_dir / "libobs.framework" / "Versions" / "A" / "libobs",
-                frameworks_dir / "libobs.framework" / "libobs",
-            ]:
-                if cand.exists():
-                    real_libobs = cand
-                    break
-
-            if real_libobs is None:
-                # Last-ditch: any file named "libobs*" anywhere in Frameworks
-                for cand in frameworks_dir.rglob("libobs*"):
-                    if cand.is_file() and not cand.is_symlink():
-                        real_libobs = cand
-                        break
-
-            if real_libobs is None:
-                print(f"  [!] No libobs binary found in {frameworks_dir}. Layout:")
-                for p in sorted(frameworks_dir.rglob("*"))[:30]:
-                    print(f"      {p.relative_to(dst_root)}")
-                raise RuntimeError("libobs binary not located inside .app/Frameworks")
-            print(f"    libobs at: {real_libobs.relative_to(dst_root)}")
-
-            # Standard top-level alias so _lib.py and verify_file find it.
-            top = frameworks_dir / "libobs.dylib"
-            if real_libobs != top:
-                if top.exists() or top.is_symlink():
-                    top.unlink()
-                shutil.copy2(real_libobs, top)
-            return sum(1 for _ in dst_root.rglob("*") if _.is_file())
+            applications = list(mount.glob("*.app"))
+            if len(applications) != 1:
+                raise RuntimeError("Expected one OBS application inside the official DMG")
+            _copy_macos_runtime(applications[0] / "Contents", dst_root)
         finally:
-            subprocess.call(["hdiutil", "detach", str(mount_pt), "-quiet"])
+            subprocess.check_call(["hdiutil", "detach", str(mount), "-quiet"])
+    _trim_bundled(dst_root)
+    _relocate_macos_runtime(dst_root, architecture)
+    return sum(1 for path in dst_root.rglob("*") if path.is_file())
 
 
 # ==========================================================================
@@ -386,7 +428,10 @@ def fetch_for(plat: str, arch: str, release: dict, cache: Path) -> bool:
 
     print(f"  asset: {asset['name']}")
     archive = cache / asset["name"]
-    download(asset["browser_download_url"], archive)
+    digest = asset.get("digest", "") or ""
+    if not digest.startswith("sha256:"):
+        raise RuntimeError(f"Official asset {asset['name']} has no SHA256 digest")
+    download(asset["browser_download_url"], archive, digest.removeprefix("sha256:"))
 
     dst = LIBS_DIR / plat / arch
     # Clean slate
@@ -406,7 +451,7 @@ def fetch_for(plat: str, arch: str, release: dict, cache: Path) -> bool:
             print(f"    +{n} files from {src_prefix} -> {sub or '.'}")
             total += n
     elif kind == "dmg":
-        total = _extract_dmg(archive, dst)
+        total = _extract_dmg(archive, dst, arch)
     else:
         print(f"  unsupported kind: {kind}")
         return False
@@ -427,6 +472,12 @@ def fetch_for(plat: str, arch: str, release: dict, cache: Path) -> bool:
         if not (dst / rel).exists():
             print(f"  [!] expected {rel} missing after extraction")
             return False
+
+    manifest_path = dst / "runtime.json"
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.is_file() else {}
+    manifest.update({"obs_version": release["tag_name"], "asset": asset["name"],
+                     "sha256": digest.removeprefix("sha256:")})
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
     # Report final size
     final_files = list(dst.rglob("*"))
@@ -474,7 +525,7 @@ _TRIM_GLOBS = [
     "**/iconengines",
     "**/imageformats",
     # obs-frontend-api (used by the OBS GUI to talk to itself; not libobs)
-    "**/obs-frontend-api.dll",
+    "**/obs-frontend-api.dll", "**/obs-frontend-api.dylib",
     "**/libobs-frontend-api*",
     "**/obs-frontend-api.framework",
     "**/frontend-tools*",
@@ -621,6 +672,8 @@ def main() -> int:
                     help="Override platform (windows / linux / macos)")
     ap.add_argument("--arch", default=None,
                     help="Override arch (x86_64 / arm64)")
+    ap.add_argument("--cache-dir", type=Path, default=Path(__file__).parent / ".fetch_cache",
+                    help="Directory for SHA256-verified official release assets")
     ap.add_argument("--version", default=DEFAULT_OBS_TAG,
                     help=f"OBS Studio version tag (default: {DEFAULT_OBS_TAG})")
     ap.add_argument("--latest", action="store_true",
@@ -631,8 +684,8 @@ def main() -> int:
     release = get_release(None if args.latest else args.version)
     print(f"Using OBS release: {release.get('tag_name', '?')}\n")
 
-    cache = Path(__file__).parent / ".fetch_cache"
-    cache.mkdir(exist_ok=True)
+    cache = args.cache_dir.resolve()
+    cache.mkdir(parents=True, exist_ok=True)
 
     if args.all:
         targets = list(ASSET_PATTERNS.keys())

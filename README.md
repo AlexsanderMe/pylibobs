@@ -78,6 +78,22 @@ python scripts/fetch_libs.py --version 33.0.0 # pin OBS version
 This downloads libobs from the official OBS GitHub release. The `_libs/` tree is `.gitignore`d
 and only populated during wheel builds.
 
+### macOS runtime
+
+The wheel preserves `libobs.framework` so Cocoa can find its shader resources.
+The native dependency graph is relocated and ad-hoc signed when bundled; no
+`DYLD_*` overrides or running OBS Studio application are needed. The wheel's
+minimum macOS version comes from the official application's `Info.plist`.
+Both Intel (`--arch x86_64`) and Apple Silicon (`--arch arm64`) DMGs are supported
+by `scripts/fetch_libs.py`, which must run on macOS with Xcode command line tools.
+Downloads and cached assets are checked against GitHub's official SHA256 digest;
+`runtime.json` records the release, asset digest and minimum OS version.
+
+Capture modules include AVFoundation and ScreenCaptureKit. Permission requests
+and Cocoa event dispatch remain the host application's responsibility. Modules
+that require OBS Studio's frontend (including its macOS virtual camera module),
+Qt, CEF or Syphon are excluded from the headless runtime.
+
 ---
 
 ## Quick start

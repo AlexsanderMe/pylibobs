@@ -118,9 +118,11 @@ ALREADY_TYPES = {
     "gs_image_file_ex_t",
     "obs_find_module_callback_t",
     "obs_display_draw_callback_t","obs_load_source_cb","obs_hotkey_enum_func",
+    "obs_task_t", "obs_task_handler_t", "obs_scene_atomic_update_func",
 }
 ALREADY_STRUCTS = {
     "obs_video_info","obs_audio_info","gs_window","gs_init_data","calldata",
+    "media_frames_per_second",
     "obs_key_combination","vec2","video_data","audio_data","video_scale_info",
     "obs_transform_info","obs_sceneitem_crop","obs_encoder_roi","encoder_packet",
     "obs_module_failure_info","obs_runtime_module_info","obs_runtime_module_path",
@@ -129,6 +131,7 @@ ALREADY_STRUCTS = {
 }
 ALREADY_ENUMS = {
     "obs_video_err","video_format","speaker_layout","obs_scale_type","obs_runtime_module_type",
+    "obs_task_type",
     "video_colorspace","video_range_type","obs_encoder_type","obs_output_flags",
     "gs_color_format","gs_zstencil_format","obs_transition_mode",
     "obs_peak_meter_type","obs_fader_type","obs_bounds_type",

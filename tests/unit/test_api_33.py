@@ -184,6 +184,21 @@ def test_load_modules_warns_when_no_plugins_exist(loading_ctx):
         ctx.load_modules()
 
 
+@pytest.mark.parametrize("system, binary, lookup", [
+    ("Darwin", "/modules/obs-ffmpeg.dylib", b"obs-ffmpeg.dylib"),
+    ("Darwin", "/modules/obs-ffmpeg.plugin/Contents/MacOS/obs-ffmpeg", b"obs-ffmpeg"),
+    ("Linux", "/modules/obs-ffmpeg.so", b"obs-ffmpeg"),
+    ("Windows", "C:/modules/obs-ffmpeg.dll", b"obs-ffmpeg"),
+])
+def test_loaded_modules_are_not_reopened(loading_ctx, system, binary, lookup):
+    ctx, lib, monkeypatch = loading_ctx
+    monkeypatch.setattr("pylibobs.context.platform.system", lambda: system)
+    lib.obs_get_module.side_effect = lambda name: object() if name == lookup else None
+    assert ctx._open_and_init_module("obs-ffmpeg", binary, "/data") is None
+    lib.obs_open_module.assert_not_called()
+    lib.obs_init_module.assert_not_called()
+
+
 def test_modules_under_added_paths_are_loaded_once(loading_ctx):
     ctx, lib, monkeypatch = loading_ctx
     monkeypatch.setattr("pylibobs.context.discover_modules", lambda: [("obs-ffmpeg", "/b/obs-ffmpeg.so", "/d")])
