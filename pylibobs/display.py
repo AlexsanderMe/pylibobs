@@ -28,6 +28,17 @@ _DEFAULT_BG = 0xFF1A1A1A     # near-black
 _x11_display_ptr = 0
 
 
+def _require_cocoa_main_thread() -> None:
+    """Cocoa views must be attached/detached on the native main thread."""
+    import ctypes
+
+    is_main = ctypes.CDLL("/usr/lib/libSystem.B.dylib").pthread_main_np
+    is_main.argtypes = []
+    is_main.restype = ctypes.c_int
+    if not is_main():
+        raise RuntimeError("macOS displays must be created and released on the main thread")
+
+
 def _open_x11_display() -> int:
     """Open (once) and cache an X11 ``Display*`` for libobs window targets.
 
@@ -132,13 +143,14 @@ def render_source_letterboxed(source_ptr, canvas_w: int, canvas_h: int,
 class Display:
     """Wraps obs_display_t. Hosts a live preview inside a native window."""
 
-    __slots__ = ("_ptr", "_owned", "_draw_cbs", "__weakref__")
+    __slots__ = ("_ptr", "_owned", "_draw_cbs", "_cocoa", "__weakref__")
 
     def __init__(self, ptr, *, owned: bool = True) -> None:
         if ptr == ffi.NULL:
             raise ValueError("Cannot wrap NULL obs_display_t pointer")
         self._ptr = ptr
         self._owned = owned
+        self._cocoa = False
         # Keep cffi callback wrappers alive; libobs holds raw fn pointers to them.
         self._draw_cbs: list = []
         if owned:
@@ -167,26 +179,35 @@ class Display:
         ----------
         hwnd:    Native window handle. On Windows this is the HWND; on Linux/X11
                  it is the X ``Window`` XID (e.g. ``int(qwidget.winId())`` while
-                 the platform is ``xcb``).
-        width:   Initial display width in pixels.
-        height:  Initial display height in pixels.
+                 the platform is ``xcb``). On macOS it is a valid ``NSView *``
+                 in this process, not an ``NSWindow *`` or a window number.
+        width:   Initial display width in backing pixels, not Cocoa points.
+        height:  Initial display height in backing pixels, not Cocoa points.
         background_color: 0xAARRGGBB color used outside the rendered area.
         x_display: (Linux only) an existing X ``Display*`` as an int pointer to
                  reuse instead of opening a fresh connection. Optional.
+
+        The window/view is borrowed: keep it alive and attached until after
+        ``release()``. On macOS create and explicitly release this display on
+        the native main thread, before destroying the view or shutting down
+        libobs. Keep the Cocoa event loop running for presentation, and use
+        ``resize()`` with the new backing-pixel size after a view resize or
+        Retina scale change. Native view pointers cannot be sent to another
+        process. This API does not initialize a GUI application or libobs.
         """
         if not hwnd:
             raise ValueError("window handle is 0/NULL")
 
         system = platform.system()
+        if system == "Darwin":
+            _require_cocoa_main_thread()
         lib = get_lib()
         init = ffi.new("struct gs_init_data *")
 
         if system == "Windows":
             init.window.hwnd = ffi.cast("void *", int(hwnd))
         elif system == "Darwin":
-            raise NotImplementedError(
-                "Display.from_window does not yet support macOS (needs an NSView)."
-            )
+            init.window.view = ffi.cast("void *", int(hwnd))
         else:
             # Linux/*BSD (X11): fill { uint32_t id; void *display; }.
             display_ptr = int(x_display) if x_display else _open_x11_display()
@@ -211,7 +232,9 @@ class Display:
                 "obs_display_create returned NULL. Check that obs_reset_video "
                 "succeeded and that the window handle is valid."
             )
-        return cls(ptr)
+        display = cls(ptr)
+        display._cocoa = system == "Darwin"
+        return display
 
     # ------------------------------------------------------------------
     # Draw callbacks
@@ -266,7 +289,14 @@ class Display:
     # ------------------------------------------------------------------
 
     def release(self) -> None:
+        """Destroy the display before its native view/window is destroyed.
+
+        macOS displays must be explicitly released on the native main thread.
+        Repeated release is harmless.
+        """
         if self._ptr != ffi.NULL and self._owned and is_alive():
+            if self._cocoa:
+                _require_cocoa_main_thread()
             lib = get_lib()
             # Quiesce first so no draw callbacks fire while we (or libobs's
             # graphics thread) are mid-teardown. This is the safe order

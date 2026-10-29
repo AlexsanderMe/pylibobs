@@ -163,7 +163,23 @@ for your own pylibobs-based applications.
 | `VideoEncoder` / `AudioEncoder` | `obs_encoder_t` | Per-type factory                |
 | `Service`        | `obs_service_t`    | RTMP/streaming targets                       |
 | `Output`         | `obs_output_t`     | File or stream sinks; `start()`/`stop()`     |
-| `Display`        | `obs_display_t`    | Live preview into a native window (HWND)     |
+| `Display`        | `obs_display_t`    | Live preview into an HWND, X11 window, or Cocoa NSView |
+
+### Native displays
+
+`Display.from_window(handle, width, height)` borrows the native target; release
+the display before destroying the window/view and before shutting down libobs.
+The graphics-thread draw callback can render any source, scene, or transition
+using `pylibobs.display.render_source_letterboxed`.
+
+On macOS, `handle` must point to an `NSView` in the **same process** as libobs.
+Create and explicitly release the display on the native main thread, keep the
+Cocoa event loop running, and keep the view alive and attached until release.
+Supply backing pixels (use the view's `convertRectToBacking:`), and call
+`resize()` when its size or Retina scale changes. An NSWindow pointer, window
+number, or view pointer received from another process is not a valid target.
+The binding has no GUI toolkit dependency; the Cocoa integration test uses
+PyObjC solely to create its test window.
 
 ---
 
