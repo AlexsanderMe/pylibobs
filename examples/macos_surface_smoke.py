@@ -184,7 +184,10 @@ def main():
             child.start()
             send.close()
             deadline = time.monotonic() + args.seconds + 20
-            while not receive.poll() and time.monotonic() < deadline:
+            metrics = None
+            while time.monotonic() < deadline:
+                if metrics is None and receive.poll():
+                    metrics = receive.recv()
                 tick = time.perf_counter()
                 presented = presenter.poll()
                 if presented:
@@ -201,9 +204,12 @@ def main():
                 AppKit.NSRunLoop.currentRunLoop().runUntilDate_(
                     AppKit.NSDate.dateWithTimeIntervalSinceNow_(0.01)
                 )
-            if not receive.poll():
+                # Producer completion does not mean the last delivered frame
+                # has already been presented in the resized window.
+                if metrics is not None and not presented:
+                    break
+            if metrics is None:
                 raise RuntimeError("Producer timed out")
-            metrics = receive.recv()
             if "error" in metrics:
                 raise RuntimeError(metrics["error"])
             metrics.update(presented=presenter.frames_presented, resized=resized,
