@@ -100,7 +100,7 @@ jobs:
       - name: Run installed binding unit and native contracts
         working-directory: ${{ env.QUALIFICATION_DIR }}
         run: |
-          "$QUALIFICATION_DIR/venv/bin/python" - <<'PY' 2>&1 | tee "$QUALIFICATION_DIR/logs/tests.log"
+          cat > "$QUALIFICATION_DIR/installed-tests.py" <<'PY'
           import os
           import sys
           from pathlib import Path
@@ -133,9 +133,14 @@ jobs:
           raise SystemExit(pytest.main([
               *(str(checkout / test) for test in tests),
               "--import-mode=importlib", "-v", "-ra",
-              f"--junitxml={os.environ['QUALIFICATION_DIR']}/tests.xml",
+              f"--junitxml={os.environ['QUALIFICATION_DIR']}/tests-{os.environ['QUALIFICATION_ATTEMPT']}.xml",
           ]))
           PY
+          for attempt in 1 2 3; do
+            QUALIFICATION_ATTEMPT="$attempt" "$QUALIFICATION_DIR/venv/bin/python" \
+              "$QUALIFICATION_DIR/installed-tests.py" \
+              2>&1 | tee "$QUALIFICATION_DIR/logs/tests-$attempt.log"
+          done
 
       - name: Qualify editable native helpers
         working-directory: ${{ env.QUALIFICATION_DIR }}
@@ -162,6 +167,25 @@ jobs:
           ]))
           PY
 
+      - name: Collect native crash reports
+        if: always()
+        run: |
+          python - <<'PY'
+          import os
+          import shutil
+          from pathlib import Path
+
+          output = Path(os.environ["QUALIFICATION_DIR"]) / "crash-reports"
+          for directory in (Path.home() / "Library/Logs/DiagnosticReports",
+                            Path("/Library/Logs/DiagnosticReports")):
+              if not directory.is_dir():
+                  continue
+              for report in directory.iterdir():
+                  if report.is_file() and report.suffix in {".ips", ".crash"}:
+                      output.mkdir(parents=True, exist_ok=True)
+                      shutil.copy2(report, output / report.name)
+          PY
+
       - name: Describe qualification scope
         if: always()
         run: |
@@ -185,6 +209,7 @@ jobs:
           if-no-files-found: warn
           path: |
             ${{ env.QUALIFICATION_DIR }}/logs
+            ${{ env.QUALIFICATION_DIR }}/crash-reports
             ${{ env.QUALIFICATION_DIR }}/wheels/*.whl
             ${{ env.QUALIFICATION_DIR }}/provenance.json
             ${{ env.QUALIFICATION_DIR }}/*.xml
