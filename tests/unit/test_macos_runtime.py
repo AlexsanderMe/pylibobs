@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import gc
+import runpy
 import weakref
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -89,3 +91,53 @@ def test_default_graphics_name_needs_no_installed_runtime(monkeypatch):
         raise ImportError("No runtime")
     monkeypatch.setattr(_lib, "find_libobs", missing)
     assert _lib.get_graphics_module() == "libobs-opengl"
+
+
+@pytest.fixture
+def wheel_build(monkeypatch, tmp_path):
+    from setuptools.dist import Distribution
+
+    setup = Mock()
+    monkeypatch.setattr("setuptools.setup", setup)
+    runpy.run_path(str(Path(__file__).resolve().parents[2] / "setup.py"))
+    command_type = setup.call_args.kwargs["cmdclass"]["bdist_wheel"]
+    command = command_type(Distribution())
+    build = Mock()
+    monkeypatch.setattr(command_type.__mro__[1], "run", build)
+    monkeypatch.setitem(command.run.__globals__, "__file__", str(tmp_path / "setup.py"))
+    monkeypatch.delenv("PYLIBOBS_ALLOW_SYSTEM_LIBOBS", raising=False)
+    return command, build, tmp_path / "pylibobs/_libs"
+
+
+@pytest.mark.parametrize("relative", [
+    "macos/arm64/Frameworks/libobs.framework/Versions/A/libobs",
+    "macos/x86_64/Frameworks/libobs.framework/Versions/A/libobs",
+    "macos/arm64/Frameworks/libobs.dylib",
+    "macos/arm64/libobs.dylib",
+    "windows/x86_64/obs.dll",
+    "linux/x86_64/libobs.so.0",
+])
+def test_wheel_build_accepts_a_bundled_runtime(wheel_build, relative):
+    command, build, libs = wheel_build
+    executable = libs / relative
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"bundled runtime")
+    command.run()
+    build.assert_called_once()
+
+
+@pytest.mark.parametrize("relative", [None, "macos/arm64/Frameworks/libobs.dylib"])
+def test_wheel_build_rejects_missing_runtime_or_directory(wheel_build, relative):
+    command, build, libs = wheel_build
+    if relative is not None:
+        (libs / relative).mkdir(parents=True)
+    with pytest.raises(SystemExit, match="no bundled libobs"):
+        command.run()
+    build.assert_not_called()
+
+
+def test_wheel_build_allows_explicit_system_runtime(wheel_build, monkeypatch):
+    command, build, _libs = wheel_build
+    monkeypatch.setenv("PYLIBOBS_ALLOW_SYSTEM_LIBOBS", "1")
+    command.run()
+    build.assert_called_once()

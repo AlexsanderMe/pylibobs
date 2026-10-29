@@ -47,12 +47,15 @@ class BinaryDistribution(Distribution):
 
 #: Set to 1 to build a wheel with no bundled libobs, for use with a system OBS.
 ALLOW_SYSTEM_LIBOBS = "PYLIBOBS_ALLOW_SYSTEM_LIBOBS"
-_LIBOBS_NAMES = ("libobs.so*", "obs.dll", "libobs.dylib", "Frameworks/libobs.dylib")
+_LIBOBS_NAMES = (
+    "libobs.so*", "obs.dll", "libobs.dylib", "Frameworks/libobs.dylib",
+    "Frameworks/libobs.framework/Versions/A/libobs",
+)
 
 
 def _has_bundled_libobs() -> bool:
     libs = Path(__file__).resolve().parent / "pylibobs" / "_libs"
-    return any(next(libs.glob(f"*/*/{name}"), None) is not None for name in _LIBOBS_NAMES)
+    return any(path.is_file() for name in _LIBOBS_NAMES for path in libs.glob(f"*/*/{name}"))
 
 
 #: Set to 1 to fail the build, instead of warning, if a macOS helper won't compile.
