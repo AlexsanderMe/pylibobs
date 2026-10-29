@@ -390,7 +390,9 @@ class OBSContext:
     def _open_and_init_module(self, name: str, bin_path: str, data_path: str) -> str | None:
         """Open and initialise one module; ``None`` on success, else the reason."""
         lib = get_lib()
-        if lib.obs_get_module(name.encode()) != ffi.NULL:
+        # Cocoa keeps the full executable name as the native module key.
+        lookup = Path(bin_path).name if platform.system() == "Darwin" else name
+        if lib.obs_get_module(lookup.encode()) != ffi.NULL:
             return None                                  # already loaded
         module_pp = ffi.new("obs_module_t **")
         rc = lib.obs_open_module(module_pp, bin_path.encode(), data_path.encode())

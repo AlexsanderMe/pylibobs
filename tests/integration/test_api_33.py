@@ -18,6 +18,7 @@ import pytest
 
 from pylibobs import OBSContext, OBSData, Source, enum_input_types
 from pylibobs._ffi import ffi, get_lib
+from pylibobs.enumeration import enum_encoder_types, enum_output_types, enum_transition_types
 from pylibobs.persistence import load_source, save_source
 
 pytestmark = pytest.mark.integration
@@ -39,13 +40,13 @@ def test_libobs_is_33(obs):
 
 
 def test_essential_modules_load_from_the_33_layout(obs):
-    lib = get_lib()
-    for name in ESSENTIAL_MODULES:
-        assert lib.obs_get_module(name.encode()) != ffi.NULL, f"{name} not loaded ({obs.failed_modules})"
     failed = {name for name, _reason in obs.failed_modules}
     assert not failed & set(ESSENTIAL_MODULES)
-    types = enum_input_types()
-    assert "ffmpeg_source" in types and "color_source_v3" in types
+    # Check module capabilities rather than platform-specific binary names.
+    assert {"ffmpeg_source", "image_source", "color_source_v3"} <= set(enum_input_types())
+    assert "fade_transition" in enum_transition_types()
+    assert "rtmp_output" in enum_output_types()
+    assert "obs_x264" in enum_encoder_types()
 
 
 def test_monitoring_enabled_roundtrip(obs):
@@ -137,5 +138,5 @@ def test_add_module_path_loads_modules_on_33():
         ctx.set_audio()
         ctx.add_module_path(bin_dir, data_template)
         ctx.load_modules(auto_detect=False)
-        assert get_lib().obs_get_module(b"obs-ffmpeg") != ffi.NULL, ctx.failed_modules
+        assert "obs-ffmpeg" not in {name for name, _reason in ctx.failed_modules}
         assert "ffmpeg_source" in enum_input_types()
