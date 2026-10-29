@@ -184,9 +184,13 @@ def main():
             child.start()
             send.close()
             deadline = time.monotonic() + args.seconds + 20
-            while not receive.poll() and time.monotonic() < deadline:
+            metrics = None
+            while time.monotonic() < deadline:
+                if metrics is None and receive.poll():
+                    metrics = receive.recv()
                 tick = time.perf_counter()
-                if presenter.poll():
+                presented = presenter.poll()
+                if presented:
                     latencies.append(presenter.last_frame_latency_ms)
                 samples.append((time.perf_counter() - tick) * 1000)
                 if presenter.frames_presented and not stalled:
@@ -195,14 +199,17 @@ def main():
                 if presenter.frames_presented >= 3 and not resized:
                     window.setContentSize_(AppKit.NSMakeSize(800, 500))
                     resized = True
-                elif resized and presenter.frames_presented >= 10 and pixels is None:
+                elif resized and presented and pixels is None:
                     pixels = _sample_presented_pixels(window)
                 AppKit.NSRunLoop.currentRunLoop().runUntilDate_(
                     AppKit.NSDate.dateWithTimeIntervalSinceNow_(0.01)
                 )
-            if not receive.poll():
+                # Producer completion does not mean the last delivered frame
+                # has already been presented in the resized window.
+                if metrics is not None and not presented:
+                    break
+            if metrics is None:
                 raise RuntimeError("Producer timed out")
-            metrics = receive.recv()
             if "error" in metrics:
                 raise RuntimeError(metrics["error"])
             metrics.update(presented=presenter.frames_presented, resized=resized,
