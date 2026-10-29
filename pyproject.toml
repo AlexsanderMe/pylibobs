@@ -39,6 +39,9 @@ dev = [
     "pytest-mock",
     "build",
     "wheel",
+    # tests/unit/test_native_build.py runs setup.py's build_py, which needs
+    # setuptools 64+; Python 3.12+ environments ship none at all.
+    "setuptools>=68",
     "requests>=2.28",   # used by scripts/fetch_libs.py
 ]
 
