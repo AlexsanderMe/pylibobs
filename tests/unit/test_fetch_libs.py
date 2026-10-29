@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import plistlib
+import sys
 from unittest.mock import Mock
 
 import pytest
@@ -39,6 +40,9 @@ def test_download_rejects_corrupt_asset_atomically(monkeypatch, tmp_path):
     assert not list(tmp_path.glob("*.part"))
 
 
+# The fake OBS.app needs framework symlinks, which Windows runners can't
+# create; the extraction itself only ever runs on macOS.
+@pytest.mark.skipif(sys.platform == "win32", reason="needs symlinks")
 def test_macos_extraction_preserves_bundle_and_headless_module_resources(tmp_path):
     contents = tmp_path / "OBS.app/Contents"
     files = {
