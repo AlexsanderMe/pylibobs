@@ -199,6 +199,45 @@ def test_loaded_modules_are_not_reopened(loading_ctx, system, binary, lookup):
     lib.obs_init_module.assert_not_called()
 
 
+@pytest.mark.parametrize("binary", [
+    r"C:\modules\obs-ffmpeg.dll",
+    r"C:/modules\obs-ffmpeg.dll",
+    "C:/modules/obs-ffmpeg.dll",
+    r"C:\Media Files\câmeras\obs-ffmpeg.dll",
+    r"\\server\plugins\obs-ffmpeg.dll",
+])
+def test_windows_module_paths_preserve_native_identity(loading_ctx, binary):
+    ctx, lib, monkeypatch = loading_ctx
+    monkeypatch.setattr("pylibobs.context.platform.system", lambda: "Windows")
+    modules = {}
+
+    def open_module(pointer, path, data):
+        # libobs derives its module key using only the forward slash separator.
+        name = path.rsplit(b"/", 1)[-1].removesuffix(b".dll")
+        modules[name] = pointer[0]
+        assert data == b"C:\\module data"
+        return 0
+
+    lib.obs_get_module.side_effect = lambda name: modules.get(name)
+    lib.obs_open_module.side_effect = open_module
+    lib.obs_init_module.return_value = True
+    assert ctx._open_and_init_module("obs-ffmpeg", binary, r"C:\module data") is None
+    assert b"obs-ffmpeg" in modules
+    assert ctx._open_and_init_module("obs-ffmpeg", binary, r"C:\module data") is None
+    lib.obs_open_module.assert_called_once()
+
+
+@pytest.mark.parametrize("system", ["Linux", "Darwin"])
+def test_posix_module_paths_preserve_literal_backslashes(loading_ctx, system):
+    ctx, lib, monkeypatch = loading_ctx
+    monkeypatch.setattr("pylibobs.context.platform.system", lambda: system)
+    binary, data = "/modules/literal\\name/plugin.so", "/data/literal\\name"
+    lib.obs_open_module.return_value = 0
+    lib.obs_init_module.return_value = True
+    assert ctx._open_and_init_module("plugin", binary, data) is None
+    assert lib.obs_open_module.call_args.args[1:] == (binary.encode(), data.encode())
+
+
 def test_modules_under_added_paths_are_loaded_once(loading_ctx):
     ctx, lib, monkeypatch = loading_ctx
     monkeypatch.setattr("pylibobs.context.discover_modules", lambda: [("obs-ffmpeg", "/b/obs-ffmpeg.so", "/d")])

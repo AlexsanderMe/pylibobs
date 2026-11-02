@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -47,6 +48,15 @@ def test_essential_modules_load_from_the_33_layout(obs):
     assert "fade_transition" in enum_transition_types()
     assert "rtmp_output" in enum_output_types()
     assert "obs_x264" in enum_encoder_types()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows module path separators")
+def test_windows_module_identity_survives_repeated_loading(obs):
+    lib = get_lib()
+    modules = {name: lib.obs_get_module(name.encode()) for name in ESSENTIAL_MODULES}
+    assert all(module != ffi.NULL for module in modules.values())
+    obs.load_modules()
+    assert all(lib.obs_get_module(name.encode()) == module for name, module in modules.items())
 
 
 def test_monitoring_enabled_roundtrip(obs):
