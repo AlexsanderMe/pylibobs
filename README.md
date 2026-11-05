@@ -357,25 +357,48 @@ python scripts/run_tests.py
 
 ---
 
-## Release process
+## Fork snapshot releases
 
-pylibobs is versioned after the libobs it bundles: **pylibobs X.Y.Z ships libobs X.Y.Z**.
-A release that only changes pylibobs, on the same libobs, adds a fourth number
-(X.Y.Z.1, X.Y.Z.2, …). Moving to a new libobs resets to its version.
+The `build/snapshot-wheels` branch distributes unofficial upstream snapshots through
+GitHub Releases only. The fork's `main` remains an upstream mirror. This branch's
+`release.yml` runs manually; pushing branches or tags does not publish anything.
 
-1. Set the same version in `pyproject.toml` and `pylibobs/__init__.py`; when moving to a new
-   libobs, also update `DEFAULT_OBS_TAG` in `scripts/fetch_libs.py`.
-   `python scripts/check_version.py` checks they agree.
-2. Tag the commit `v<version>` (e.g. `v33.0.0`) and push the tag. GitHub Actions:
-   - Refuses to build unless the tag, both version strings and `DEFAULT_OBS_TAG` agree
-   - Builds platform-specific wheels with bundled libobs (Windows x64 / Linux x86_64 / macOS Apple Silicon)
-   - Builds the sdist
-   - Publishes to PyPI via [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (no token needed in repo secrets)
-   - Attaches all wheels to a GitHub Release with auto-generated notes
+From Actions, select the existing Release workflow, choose `build/snapshot-wheels`,
+and provide the full upstream commit SHA and build revision (initially `1`). The
+workflow name becomes **Snapshot wheels** on this branch. The CLI equivalent is:
 
-To set up Trusted Publishing on PyPI for this repo, register `pylibobs` as a project on PyPI,
-then in *Project settings → Publishing*, add a "GitHub Actions" trusted publisher pointing at
-`<owner>/pylibobs` / workflow `release.yml` / environment `pypi`.
+```bash
+gh workflow run release.yml --repo AlexsanderMe/pylibobs --ref build/snapshot-wheels \
+  -f upstream_sha=<full-upstream-commit-sha> -f build_revision=1
+```
+
+The commit must belong to `jonata/pylibobs` main history. The workflow downloads
+that exact source, tests it before stamping a local package version, and builds
+Windows x64, Linux x64, macOS Intel, and macOS Apple Silicon wheels. Python 3.11+
+is required for the snapshot automation. Native builds use the upstream scripts.
+
+For example, a build produces package version `33.0.0+gb15085055394.r1` and tag
+`snapshot-33.0.0-gb15085055394-r1`. The tag pins the build recipe; `provenance.json`
+records the full upstream and recipe commits, OBS version, run URL, and wheel
+checksums. The first release compares against the tag of the current PyPI release;
+later ones compare against the previous published snapshot's upstream commit.
+
+All four targets must pass unit tests, package checks, and installed-wheel smoke
+checks before publication. These checks load libobs and native helpers; they do
+not replace the full graphics/capture integration suite. Assets are uploaded to a
+draft, then published as a prerelease without changing the repository's latest
+stable release. `SHA256SUMS` covers the wheels and provenance manifest.
+
+Enable release immutability in the fork's **Settings → General → Releases** before
+publishing. Existing tags/releases are never overwritten. To rebuild the same
+source, increase the build revision; if a run leaves an incomplete draft, either
+remove that unpublished draft and its tag before retrying or use a new revision.
+Consumers should pin asset URLs and SHA256 hashes. Keep published snapshots so
+historical dependency pins remain usable; migrate to PyPI when upstream publishes.
+
+The workflow is maintained separately from source updates. Refresh its build
+steps when upstream packaging changes; upstream application changes require only
+a different input SHA, not merges into this branch.
 
 ---
 
