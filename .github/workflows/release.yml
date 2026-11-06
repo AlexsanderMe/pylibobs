@@ -54,7 +54,7 @@ jobs:
           # 2022 and GitHub's macos-13 (Intel) runners have multi-hour
           # queue times. Intel users can still install pylibobs from
           # sdist (which compiles fine on any macOS).
-          - os: macos-14
+          - os: macos-15
             target_os: macos
             target_arch: arm64
     steps:
@@ -170,18 +170,20 @@ jobs:
         # Use build isolation so build downloads the exact setuptools>=68
         # declared in pyproject.toml's [build-system].requires.
         env:
-          # macOS: the wheel must carry the IOSurface helper.
+          # macOS: the wheel must carry the native helpers.
           PYLIBOBS_REQUIRE_NATIVE: "1"
         run: python -m build --wheel
 
-      - name: Verify macOS wheel carries the IOSurface helper
+      - name: Verify macOS wheel carries the native helpers
         if: runner.os == 'macOS'
         run: |
           python - <<'PY'
           import glob, sys, zipfile
           for whl in glob.glob("dist/*.whl"):
-              if "pylibobs/native/macos_surfaces.dylib" not in zipfile.ZipFile(whl).namelist():
-                  sys.exit(f"{whl} lacks pylibobs/native/macos_surfaces.dylib")
+              names = zipfile.ZipFile(whl).namelist()
+              for helper in ("macos_surfaces", "macos_camera"):
+                  if f"pylibobs/native/{helper}.dylib" not in names:
+                      sys.exit(f"{whl} lacks pylibobs/native/{helper}.dylib")
           PY
         shell: bash
 
